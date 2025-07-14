@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex justify-between items-center mb-4">
+  <h1 class="text-2xl font-bold">Drop-Off Points</h1>
+  <a href="{% url 'dropoff_create' %}" class="bg-green-600 text-white px-4 py-2 rounded">+ Add New</a>
+</div>
+<div class="overflow-x-auto">
+  <table class="min-w-full divide-y divide-gray-200 bg-white shadow rounded-lg">
+    <thead class="bg-gray-100">
+      <tr>
+        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Address</th>
+        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Coordinates</th>
+        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">QR Code</th>
+        <th class="px-6 py-3">Actions</th>
+      </tr>
+    </thead>
+    <tbody class="bg-white divide-y divide-gray-200">
+      {% for point in dropoffs %}
+      <tr>
+        <td class="px-6 py-4">{{ point.name }}</td>
+        <td class="px-6 py-4">{{ point.address }}</td>
+        <td class="px-6 py-4">{{ point.latitude }}, {{ point.longitude }}</td>
+        <td class="px-6 py-4">
+          {% if point.qr_code %}
+          <img src="{{ point.qr_code.url }}" alt="QR Code" class="h-16 w-16 object-contain mb-2">
+          <a href="{{ point.qr_code.url }}" download class="text-blue-500 text-sm underline">Download</a>
+          {% else %}
+          <span class="text-red-500 text-sm">Not Generated</span>
+          {% endif %}
+        </td>
+        <td class="px-6 py-4">
+          <a href="{% url 'dropoff_edit' point.id %}" class="text-blue-600 hover:underline">Edit</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

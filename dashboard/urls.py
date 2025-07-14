@@ -5,7 +5,7 @@ from . import views
 
 urlpatterns = [
     path('', views.dashboard, name='dashboard'),
-    #path('users/', views.user_list, name='users'),
-    #path('submissions/', views.submission_list, name='submissions'),
-    #path('rewards/', views.reward_list, name='rewards'),
+     path('dropoffs/', views.dropoff_list, name='dropoff_list'),
+    path('dropoffs/add/', views.dropoff_create, name='dropoff_create'),
+    path('dropoffs/edit/<int:pk>/', views.dropoff_edit, name='dropoff_edit'),
 ]

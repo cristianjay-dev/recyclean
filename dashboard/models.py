@@ -16,3 +16,15 @@ class RewardRequest(models.Model):
     load_amount = models.IntegerField()
     status = models.CharField(max_length=10, choices=[('pending', 'Pending'), ('approved', 'Approved')])
     
+
+
+class DropOffPoint(models.Model):
+    name = models.CharField(max_length=100)
+    address = models.TextField()
+    latitude = models.FloatField()
+    longitude = models.FloatField()
+    qr_code = models.ImageField(upload_to='qr_codes/', blank=True)
+
+    def __str__(self):
+        return self.name
+

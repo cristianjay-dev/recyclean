@@ -1,0 +1,100 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">{{ form_title }}</h1>
+
+<form method="post" class="space-y-6">
+  {% csrf_token %}
+
+  <div>
+    <label class="block font-medium">Select Drop-Off Location</label>
+    <div id="map" class="w-full h-96 border rounded "></div>
+  </div>
+
+  <div>
+    <label class="block font-medium">Name</label>
+    {{ form.name }}
+  </div>
+
+  <div>
+    <label class="block font-medium">Address</label>
+    {{ form.address }}
+  </div>
+
+  <div class="grid grid-cols-2 gap-4">
+    <div>
+      <label class="block font-medium">Latitude</label>
+      {{ form.latitude }}
+    </div>
+    <div>
+      <label class="block font-medium">Longitude</label>
+      {{ form.longitude }}
+    </div>
+  </div>
+
+  <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+    Save and Generate QR
+  </button>
+</form>
+
+<!-- Leaflet Styles & Script -->
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+/>
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+</script>
+
+<script>
+  const map = L.map('map').setView([11.2440, 125.0030], 13); // Tacloban default
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
+
+  const latInput = document.getElementById('id_latitude');
+  const lngInput = document.getElementById('id_longitude');
+  const nameInput = document.getElementById('id_name');
+  const addressInput = document.getElementById('id_address');
+
+  let marker;
+
+  // If already editing existing data
+  if (latInput.value && lngInput.value) {
+    const lat = parseFloat(latInput.value);
+    const lng = parseFloat(lngInput.value);
+    marker = L.marker([lat, lng]).addTo(map);
+    map.setView([lat, lng], 14);
+  }
+
+  // When map is clicked
+  map.on('click', function(e) {
+    const lat = e.latlng.lat.toFixed(6);
+    const lng = e.latlng.lng.toFixed(6);
+
+    latInput.value = lat;
+    lngInput.value = lng;
+
+    if (marker) {
+      marker.setLatLng(e.latlng);
+    } else {
+      marker = L.marker(e.latlng).addTo(map);
+    }
+
+    // Fetch address from Nominatim
+    fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&email=your@email.com`)
+      .then(response => response.json())
+      .then(data => {
+        const fullAddress = data.display_name;
+        const nameGuess = data.address?.neighbourhood || data.address?.suburb || data.address?.village || data.address?.road || "Drop-Off";
+
+        nameInput.value = `${nameGuess} Drop-Off Site`;
+        addressInput.value = fullAddress;
+      })
+      .catch(err => {
+        console.error("Reverse geocoding error:", err);
+      });
+  });
+</script>
+{% endblock %}
