@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>RecyClean Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="flex bg-gray-100 min-h-screen">
+
+  <!-- Sidebar -->
+  <aside class="w-64 bg-gray-800 text-white flex flex-col p-4 space-y-4">
+    <h2 class="text-2xl font-bold mb-6">RecyClean</h2>
+    <nav class="flex flex-col space-y-2">
+      <a href="{% url 'dashboard' %}" class="hover:bg-gray-700 px-3 py-2 rounded">Dashboard</a>
+      <a href="#" class="hover:bg-gray-700 px-3 py-2 rounded">Drop-off Sites</a>
+      <a href="#" class="hover:bg-gray-700 px-3 py-2 rounded">Users</a>
+      <a href="#" class="hover:bg-gray-700 px-3 py-2 rounded">Submissions</a>
+      <a href="#" class="hover:bg-gray-700 px-3 py-2 rounded">Rewards</a>
+    </nav>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="flex-grow p-6">
+    {% block content %}
+    <h1 class="text-3xl font-semibold mb-4">Dashboard</h1>
+    <div class="grid grid-cols-3 gap-4">
+      <div class="bg-white shadow rounded-lg p-4">
+        <p class="text-gray-600">Total Users</p>
+        <p class="text-2xl font-bold">{{ total_users }}</p>
+      </div>
+      <div class="bg-white shadow rounded-lg p-4">
+        <p class="text-gray-600">Total Submissions</p>
+        <p class="text-2xl font-bold">{{ total_submissions }}</p>
+      </div>
+      <div class="bg-white shadow rounded-lg p-4">
+        <p class="text-gray-600">Reward Requests</p>
+        <p class="text-2xl font-bold">{{ total_rewards }}</p>
+      </div>
+    {% endblock %}
+  </main>
+
+</body>
+</html>
