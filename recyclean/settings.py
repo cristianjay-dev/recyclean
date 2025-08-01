@@ -99,7 +99,7 @@ WSGI_APPLICATION = 'recyclean.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'recyclean_db',
+        'NAME': 'capstone_db',
         'USER': 'postgres',
         'PASSWORD': 'Aspire5#073020',
         'HOST': 'localhost',
