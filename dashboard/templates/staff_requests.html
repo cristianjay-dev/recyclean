@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">Pending Staff Requests</h1>
+
+<table class="min-w-full bg-white rounded shadow">
+  <thead class="bg-gray-200">
+    <tr>
+      <th class="text-left p-3">Name</th>
+      <th class="text-left p-3">Barangay</th>
+      <th class="text-left p-3">Mobile</th>
+      <th class="text-left p-3">Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for staff in pending_staff %}
+    <tr class="border-t">
+      <td class="p-3">{{ staff.name }}</td>
+      <td class="p-3">{{ staff.barangay }}</td>
+      <td class="p-3">{{ staff.mobile_number }}</td>
+      <td class="p-3">
+        <form method="post" action="{% url 'approve_staff' staff.id %}">
+          {% csrf_token %}
+          <button type="submit" class="bg-green-600 text-white px-3 py-1 rounded">Approve</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

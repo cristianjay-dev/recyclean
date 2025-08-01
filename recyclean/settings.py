@@ -9,11 +9,22 @@ https://docs.djangoproject.com/en/5.2/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
+import os
 
 from pathlib import Path
+from dotenv import load_dotenv
+
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+load_dotenv(dotenv_path=Path(BASE_DIR) / ".env.local") 
+
+
+PAYREX_PUBLIC_KEY = os.getenv('PAYREX_PUBLIC_KEY')
+PAYREX_SECRET_KEY = os.getenv('PAYREX_SECRET_KEY')
+
 
 
 # Quick-start development settings - unsuitable for production
@@ -25,7 +36,7 @@ SECRET_KEY = 'django-insecure-)ya+&5wj4tmvrxo4c+u&@f_jnub3*#t*wbx2dm23i9wz#=p$+z
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -38,15 +49,19 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     
-    "dashboard",  # Custom app for dashboard functionality
+    "dashboard",
+    'rest_framework',
+    'corsheaders',# Custom app for dashboard functionality
     
 ]
 
+CORS_ALLOW_ALL_ORIGINS = True
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -55,6 +70,8 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+
 
 ROOT_URLCONF = 'recyclean.urls'
 
@@ -81,8 +98,12 @@ WSGI_APPLICATION = 'recyclean.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'recyclean_db',
+        'USER': 'postgres',
+        'PASSWORD': 'Aspire5#073020',
+        'HOST': 'localhost',
+        'PORT': '5432',
     }
 }
 

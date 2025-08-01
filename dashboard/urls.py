@@ -1,11 +1,27 @@
-
 from django.urls import path
 from . import views
 
-
 urlpatterns = [
+    # ------------------ Dashboard ------------------
     path('', views.dashboard, name='dashboard'),
-     path('dropoffs/', views.dropoff_list, name='dropoff_list'),
-    path('dropoffs/add/', views.dropoff_create, name='dropoff_create'),
-    path('dropoffs/edit/<int:pk>/', views.dropoff_edit, name='dropoff_edit'),
+
+    # ------------------ Reward Requests ------------------
+    path('rewards/', views.reward_requests_view, name='reward_requests'),
+    path('rewards/approve/<int:pk>/', views.approve_reward, name='approve_reward'),
+
+    # ------------------ Image Processing ------------------
+    path('analyze/', views.analyze_image, name='analyze_image'),
+
+    # ------------------ Quiz Management ------------------
+    path('quiz/', views.quiz_dashboard, name='quiz_dashboard'),
+    path('quiz/create-category/', views.create_category, name='create_category'),
+    path('quiz/add-question/<int:category_id>/', views.add_question_to_category, name='add_question_to_category'),
+    path('quiz/update-question/<int:quiz_id>/', views.update_question, name='update_question'),
+    path('quiz/delete-question/<int:question_id>/', views.delete_question, name='delete_question'),
+    path('quiz/delete-category/<int:category_id>/', views.delete_category, name='delete_category'),
+
+    # ------------------ Staff & Drop-off Site Management ------------------
+    path('dropoff-sites/', views.dropoff_sites_view, name='dropoff_sites_view'),
+    path('staff-requests/', views.staff_requests_view, name='staff_requests_view'),
+    path('approve-staff/<int:user_id>/', views.approve_staff, name='approve_staff'),
 ]
