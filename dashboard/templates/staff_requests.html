@@ -13,18 +13,91 @@
   </thead>
   <tbody>
     {% for staff in pending_staff %}
-    <tr class="border-t">
+    <tr class="border-t" id="staff-row-{{ staff.id }}">
       <td class="p-3">{{ staff.name }}</td>
       <td class="p-3">{{ staff.barangay }}</td>
       <td class="p-3">{{ staff.mobile_number }}</td>
-      <td class="p-3">
-        <form method="post" action="{% url 'approve_staff' staff.id %}">
-          {% csrf_token %}
-          <button type="submit" class="bg-green-600 text-white px-3 py-1 rounded">Approve</button>
-        </form>
+      <td class="p-3 flex gap-2">
+        <button onclick="confirmApprove({{ staff.id }}, '{{ csrf_token }}')" class="bg-green-600 text-white px-3 py-1 rounded">Approve</button>
+        <button onclick="confirmReject({{ staff.id }}, '{{ csrf_token }}')" class="bg-red-600 text-white px-3 py-1 rounded">Reject</button>
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+
+<!-- ✅ Modal Container -->
+<div id="modal" class="fixed inset-0 bg-black bg-opacity-50 hidden justify-center items-center z-50">
+  <div class="bg-white rounded p-6 w-full max-w-md text-center">
+    <p id="modal-text" class="mb-4 text-lg font-medium"></p>
+    <div class="flex justify-center gap-4">
+      <button id="modal-confirm" class="bg-blue-600 text-white px-4 py-2 rounded">Confirm</button>
+      <button onclick="closeModal()" class="bg-gray-400 text-white px-4 py-2 rounded">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let action = null;
+  let targetUserId = null;
+  let csrf = null;
+
+  function confirmApprove(userId, token) {
+    action = "approve";
+    targetUserId = userId;
+    csrf = token;
+    showModal("Are you sure you want to approve this staff?");
+  }
+
+  function confirmReject(userId, token) {
+    action = "reject";
+    targetUserId = userId;
+    csrf = token;
+    showModal("Are you sure you want to reject and delete this account?");
+  }
+
+  function showModal(message) {
+    document.getElementById('modal-text').innerText = message;
+    document.getElementById('modal').classList.remove('hidden');
+    document.getElementById('modal').classList.add('flex');
+  }
+
+  function closeModal() {
+    document.getElementById('modal').classList.add('hidden');
+    document.getElementById('modal').classList.remove('flex');
+    action = null;
+    targetUserId = null;
+  }
+
+  document.getElementById("modal-confirm").addEventListener("click", function () {
+    if (!action || !targetUserId) return;
+
+    const url = action === "approve"
+      ? `/approve-staff/${targetUserId}/`
+      : `/reject-staff/${targetUserId}/`;
+
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': csrf
+      }
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.success) {
+        document.getElementById(`staff-row-${targetUserId}`).remove();
+        alert(action === "approve" ? "✅ Staff approved." : "🗑️ Staff rejected and deleted.");
+      } else {
+        alert("❌ Action failed.");
+      }
+    })
+    .catch(err => {
+      console.error(err);
+      alert("⚠️ Server error.");
+    })
+    .finally(() => {
+      closeModal();
+    });
+  });
+</script>
 {% endblock %}

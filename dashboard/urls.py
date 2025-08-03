@@ -24,4 +24,7 @@ urlpatterns = [
     path('dropoff-sites/', views.dropoff_sites_view, name='dropoff_sites_view'),
     path('staff-requests/', views.staff_requests_view, name='staff_requests_view'),
     path('approve-staff/<int:user_id>/', views.approve_staff, name='approve_staff'),
+    path('api/staff-signup/', views.staff_signup_api, name='staff_signup_api'),
+    path('api/staff-login/', views.staff_login_view, name='staff_login'),
+    path('reject-staff/<int:user_id>/', views.reject_staff, name='reject_staff'),
 ]

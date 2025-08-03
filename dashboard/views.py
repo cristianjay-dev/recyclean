@@ -14,6 +14,9 @@ from .payrex_api import get_balance
 
 from django.views.decorators.http import require_POST
 
+import json
+from django.utils.timezone import now
+from django.db.models import Q
 
 import uuid, json
 import cv2
@@ -276,3 +279,106 @@ def send_sms_semaphore(mobile_number, message):
     except Exception as e:
         print("📵 SMS error (will not crash system):", e)
         return False
+    
+
+
+@csrf_exempt
+def staff_signup_api(request):
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+
+            name = f"{data['first_name']} {data['last_name']}"
+            email = data['email']
+            mobile = data['phone']
+            password_hash = data['password']
+            barangay = data['barangay']
+
+            if User.objects.filter(mobile_number=mobile).exists():
+                return JsonResponse({'success': False, 'error': 'Mobile number already exists'}, status=400)
+
+            User.objects.create(
+                name=name,
+                email=email,
+                mobile_number=mobile,
+                password_hash=password_hash,  # 🔐 You may want to hash this
+                user_type='staff',
+                barangay=barangay,
+                is_approved=False,
+                date_joined=now(),
+                account_status='pending',
+                registered_by_admin=False
+            )
+
+            return JsonResponse({'success': True, 'message': 'Application submitted'})
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+        
+        
+@csrf_exempt
+@require_POST
+def staff_login_view(request):
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        identifier = data.get("identifier")  # can be email or mobile number
+        password = data.get("password")
+
+        if not identifier or not password:
+            return JsonResponse({"success": False, "error": "Missing credentials."})
+
+        # Find user by email or phone
+        user = User.objects.filter(user_type='staff').filter(
+            Q(email=identifier) | Q(mobile_number=identifier)
+        ).first()
+
+        if not user:
+            return JsonResponse({"success": False, "error": "Staff account not found or incorrect credentials."})
+
+        # 🚫 Check if not approved
+        if not user.is_approved:
+            return JsonResponse({
+                "success": False,
+                "error": "Your account is still pending approval. Please wait for the admin to approve it."
+            })
+
+        # 🔐 You may want to hash and compare passwords in production
+        if user.password_hash != password:
+            return JsonResponse({"success": False, "error": "Incorrect password."})
+
+        # ✅ Success
+        return JsonResponse({
+            "success": True,
+            "message": "Login successful.",
+            "is_approved": user.is_approved,
+            "user": {
+                "id": user.id,
+                "name": user.name,
+                "email": user.email,
+                "mobile": user.mobile_number,
+                "barangay": user.barangay,
+            }
+        })
+
+    except Exception as e:
+        return JsonResponse({"success": False, "error": str(e)})
+
+@csrf_exempt
+@require_POST
+def reject_staff(request, user_id):
+    staff = get_object_or_404(User, pk=user_id)
+
+    if staff.user_type != 'staff':
+        return JsonResponse({'success': False, 'error': 'User is not staff'})
+
+    name = staff.name
+    mobile = staff.mobile_number
+
+    # Send SMS before deletion
+    send_sms_semaphore(
+        mobile,
+        f"Hi {name}, unfortunately your RecyClean staff application has been rejected. Thank you for your interest."
+    )
+
+    staff.delete()
+
+    return JsonResponse({'success': True})
