@@ -26,7 +26,7 @@
   </tbody>
 </table>
 
-<!-- ✅ Modal Container -->
+<!-- ✅ Confirmation Modal -->
 <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 hidden justify-center items-center z-50">
   <div class="bg-white rounded p-6 w-full max-w-md text-center">
     <p id="modal-text" class="mb-4 text-lg font-medium"></p>
@@ -35,6 +35,11 @@
       <button onclick="closeModal()" class="bg-gray-400 text-white px-4 py-2 rounded">Cancel</button>
     </div>
   </div>
+</div>
+
+<!-- ✅ Success Toast -->
+<div id="toast" class="fixed bottom-6 right-6 bg-green-600 text-white px-4 py-2 rounded shadow-lg hidden z-50">
+  <span id="toast-message"></span>
 </div>
 
 <script>
@@ -69,6 +74,17 @@
     targetUserId = null;
   }
 
+  function showToast(message) {
+    const toast = document.getElementById('toast');
+    const text = document.getElementById('toast-message');
+    text.innerText = message;
+    toast.classList.remove('hidden');
+
+    setTimeout(() => {
+      toast.classList.add('hidden');
+    }, 3000); // hide after 3 seconds
+  }
+
   document.getElementById("modal-confirm").addEventListener("click", function () {
     if (!action || !targetUserId) return;
 
@@ -86,7 +102,9 @@
     .then(data => {
       if (data.success) {
         document.getElementById(`staff-row-${targetUserId}`).remove();
-        alert(action === "approve" ? "✅ Staff approved." : "🗑️ Staff rejected and deleted.");
+        showToast(action === "approve"
+          ? "✅ Staff approved successfully!"
+          : "🗑️ Staff rejected and deleted.");
       } else {
         alert("❌ Action failed.");
       }

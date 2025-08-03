@@ -64,7 +64,7 @@ def payrex_balance_view(request):
     }
 
     try:
-        response = requests.get(url, headers=headers)
+        response = request.get(url, headers=headers)
         data = response.json()
         return JsonResponse({"balance": data.get("balance", "unknown")})
     except Exception as e:
