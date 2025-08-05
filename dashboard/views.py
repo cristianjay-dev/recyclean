@@ -9,20 +9,25 @@ from django.views.decorators.http import require_http_methods
 from django.middleware.csrf import get_token
 
 from .forms import ManualQuizForm, QuizCategoryForm
-from .models import RewardRequest, QuizCategory, Quiz, QuizAnswer, User, QuizSession, DropOffSite
+from .models import RewardRequest, QuizCategory, Quiz, QuizAnswer, User, QuizSession, DropOffSite, Submission, StaffTransaction
 from .payrex_api import get_balance
 
 from django.views.decorators.http import require_POST
 
 import json
-from django.utils.timezone import now
+from django.utils.timezone import now, timedelta
 from django.db.models import Q
 
 import uuid, json
 import cv2
 import numpy as np
 from rest_framework.parsers import MultiPartParser
-from rest_framework.decorators import api_view, parser_classes
+from rest_framework.decorators import api_view, parser_classes, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+
+
 
 # ------------------ DASHBOARD ------------------
 def dashboard(request):
@@ -382,3 +387,134 @@ def reject_staff(request, user_id):
     staff.delete()
 
     return JsonResponse({'success': True})
+
+
+# Staff Dashboard Metrics
+@csrf_exempt
+def staff_metrics(request, staff_id):
+    try:
+        staff = User.objects.get(pk=staff_id, user_type='staff')
+
+        today = timezone.now().date()
+        past_week = [today - timedelta(days=i) for i in range(6, -1, -1)]
+
+        daily_data = []
+        for day in past_week:
+            count = Submission.objects.filter(
+                dropoff_site=staff.dropoff_site,
+                created_at__date=day
+            ).count()
+            daily_data.append({"day": day.strftime("%a"), "count": count})
+
+        monthly_start = today.replace(day=1)
+        monthly_submissions = Submission.objects.filter(
+            dropoff_site=staff.dropoff_site,
+            created_at__date__gte=monthly_start
+        )
+
+        monthly_bottle_count = 0
+        for s in monthly_submissions:
+            for b in s.bottle_data:
+                monthly_bottle_count += b.get('quantity', 0)
+
+        return JsonResponse({
+            "success": True,
+            "staff": {
+                "id": staff.id,
+                "name": staff.name,
+                "barangay": staff.barangay
+            },
+            "daily_breakdown": [
+                {"day": d["day"], "count": d["count"]} for d in daily_data
+            ],
+            "weekly_submissions": sum(d["count"] for d in daily_data),
+            "monthly_plastic_kg": monthly_bottle_count
+        })
+    except User.DoesNotExist:
+        return JsonResponse({"success": False, "error": "Staff not found"}, status=404)
+
+
+
+
+@api_view(['POST'])
+@csrf_exempt
+def process_qr_submission(request):
+    data = request.data
+    print("📥 Incoming submission data:", data)  # Debugging log
+
+    qr_id = data.get('qr_id')
+    if not qr_id:
+        return Response({'error': 'Missing QR ID'}, status=400)
+
+    try:
+        # Prevent duplicates
+        if Submission.objects.filter(qr_id=qr_id).exists():
+            return Response({'error': 'QR code already used'}, status=400)
+
+        # Get staff
+        staff_id = data.get('staff_id')
+        try:
+            staff = User.objects.get(id=staff_id, user_type='staff')
+        except User.DoesNotExist:
+            return Response({'error': f"Staff with id {staff_id} not found"}, status=404)
+
+        # Get Drop-off site
+        dropoff_name = data.get('dropoff_site')
+        dropoff_site = DropOffSite.objects.filter(barangay=dropoff_name).first()
+        if not dropoff_site:
+            return Response({'error': f"Drop-off site '{dropoff_name}' not found"}, status=404)
+
+        # Optional resident user
+        user = None
+        if data.get('user_id'):
+            user = User.objects.filter(id=data['user_id'], user_type='resident').first()
+            if not user:
+                return Response({'error': f"Resident with id {data['user_id']} not found"}, status=404)
+
+        # Create submission
+        submission = Submission.objects.create(
+            qr_id=qr_id,
+            user=user,
+            staff=staff,
+            dropoff_site=dropoff_site,
+            bottle_data=data.get('bottles', []),
+            total_points=data.get('total_points', 0),
+            source='manual'
+        )
+
+        # Log transaction
+        StaffTransaction.objects.create(
+            staff=staff,
+            submission=submission,
+            action='manual_submission',
+            notes=f"Manual submission for {user.name if user else 'Unassigned'}"
+        )
+
+        # Add points to user if applicable
+        if user:
+            user.total_points += data.get('total_points', 0)
+            user.save()
+
+        print("✅ Submission saved successfully:", submission.id)
+        return Response({'message': 'Manual submission created successfully'}, status=201)
+
+    except Exception as e:
+        import traceback
+        print("❌ Error in process_qr_submission:", str(e))
+        traceback.print_exc()
+        return Response({'error': str(e)}, status=400)
+    
+
+@api_view(['GET'])
+def staff_transaction_history(request, staff_id):
+    transactions = StaffTransaction.objects.filter(staff_id=staff_id).order_by('-created_at')
+    data = []
+    for t in transactions:
+        data.append({
+            "action": t.action,
+            "notes": t.notes,
+            "points": t.submission.total_points,
+            "date": t.created_at.strftime("%Y-%m-%d %H:%M"),
+        })
+    return Response({"success": True, "transactions": data})
+ 

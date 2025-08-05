@@ -47,22 +47,89 @@ class User(models.Model):
 # -------------------------
 # SUBMISSIONS TABLE
 # -------------------------
+from django.db import models
+from .models import User, DropOffSite  # Adjust import if needed
+
+# -------------------------
+# SUBMISSIONS TABLE
+# -------------------------
 class Submission(models.Model):
     id = models.AutoField(primary_key=True)
-    user = models.ForeignKey(User, on_delete=models.DO_NOTHING, db_column='user_id', related_name='submissions')
-    staff = models.ForeignKey(User, on_delete=models.DO_NOTHING, db_column='staff_id', related_name='processed_submissions')
-    volume_type = models.CharField(max_length=10)
-    quantity = models.IntegerField()
-    image_path = models.TextField()
-    processing_mode = models.CharField(max_length=20)
-    estimated_quantity = models.IntegerField()
-    confidence_score = models.FloatField()
-    points_awarded = models.IntegerField()
-    date_submitted = models.DateTimeField()
+
+    # Used to prevent duplicate QR scanning
+    qr_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.DO_NOTHING,
+        db_column='user_id',
+        related_name='submissions',
+        null=True,
+        blank=True
+    )
+    staff = models.ForeignKey(
+        User,
+        on_delete=models.DO_NOTHING,
+        db_column='staff_id',
+        related_name='processed_submissions'
+    )
+    dropoff_site = models.ForeignKey(
+        DropOffSite,
+        on_delete=models.DO_NOTHING,
+        db_column='dropoff_site_id',
+        related_name='submissions'
+    )
+
+    # Bottle info stored as: [{'size': '500ml', 'quantity': 3}, ...]
+    bottle_data = models.JSONField(default=list)
+
+    total_points = models.IntegerField()
+    source = models.CharField(max_length=20, default='manual')
+
+    # Optional image-based submission data
+    image_path = models.TextField(blank=True, null=True)
+    estimated_quantity = models.IntegerField(blank=True, null=True)
+    confidence_score = models.FloatField(blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         managed = True
         db_table = 'submissions'
+
+    def __str__(self):
+        return f"Submission by {self.staff.name} - {self.total_points} pts"
+
+
+# -------------------------
+# STAFF TRANSACTION HISTORY TABLE
+# -------------------------
+class StaffTransaction(models.Model):
+    id = models.AutoField(primary_key=True)
+    staff = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        db_column='staff_id',
+        related_name='staff_transactions'
+    )
+    submission = models.ForeignKey(
+        Submission,
+        on_delete=models.CASCADE,
+        related_name='transaction_record'
+    )
+    action = models.CharField(max_length=50, default='submission_made')  
+    notes = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    notes = models.TextField(blank=True, null=True, help_text="Details about this transaction")
+
+    class Meta:
+        managed = True
+        db_table = 'staff_transactions'
+
+    def __str__(self):
+        return f"{self.staff.name} - {self.action} on {self.created_at.strftime('%Y-%m-%d %H:%M')}"
+
 
 # -------------------------
 # REWARD REQUESTS TABLE

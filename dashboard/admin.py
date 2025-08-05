@@ -29,12 +29,12 @@ class DropOffSiteAdmin(admin.ModelAdmin):
     list_filter = ('barangay',)
 
 # ------------------------
-# SUBMISSION ADMIN
+# SUBMISSION ADMIN (Updated fields)
 # ------------------------
 @admin.register(Submission)
 class SubmissionAdmin(admin.ModelAdmin):
-    list_display = ('user', 'staff', 'volume_type', 'quantity', 'points_awarded', 'date_submitted')
-    list_filter = ('processing_mode', 'volume_type')
+    list_display = ('user', 'staff', 'dropoff_site', 'total_points', 'source', 'created_at')
+    list_filter = ('source', 'dropoff_site')
     search_fields = ('user__name', 'staff__name')
 
 # ------------------------

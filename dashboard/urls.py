@@ -27,4 +27,11 @@ urlpatterns = [
     path('api/staff-signup/', views.staff_signup_api, name='staff_signup_api'),
     path('api/staff-login/', views.staff_login_view, name='staff_login'),
     path('reject-staff/<int:user_id>/', views.reject_staff, name='reject_staff'),
+    
+    path('api/staff/metrics/<int:staff_id>/', views.staff_metrics, name='staff_metrics'),
+    path('api/process-qr-submission/', views.process_qr_submission, name='process_qr_submission'),
+    path('api/staff/<int:staff_id>/transactions/', views.staff_transaction_history, name='staff_transaction_history'),
+
+
+
 ]
