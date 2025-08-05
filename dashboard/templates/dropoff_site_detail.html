@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1 class="text-2xl font-bold mb-4">{{ site.barangay }} Drop-off Site</h1>
+
+<!-- Metrics -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+    <div class="bg-white shadow rounded p-4 text-center">
+        <h2 class="text-lg font-bold">Total Submissions</h2>
+        <p class="text-3xl font-semibold text-green-600">{{ total_submissions }}</p>
+    </div>
+    <div class="bg-white shadow rounded p-4 text-center">
+        <h2 class="text-lg font-bold">Total Bottles</h2>
+        <p class="text-3xl font-semibold text-blue-600">{{ total_bottles }}</p>
+    </div>
+    <div class="bg-white shadow rounded p-4 text-center">
+        <h2 class="text-lg font-bold">Total Points</h2>
+        <p class="text-3xl font-semibold text-orange-500">{{ total_points }}</p>
+    </div>
+</div>
+
+<!-- Charts -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+    <div class="bg-white shadow rounded p-4">
+        <h2 class="text-lg font-bold mb-2">Daily Submissions (Last 7 Days)</h2>
+        <canvas id="dailyChart"></canvas>
+    </div>
+    <div class="bg-white shadow rounded p-4">
+        <h2 class="text-lg font-bold mb-2">Bottle Size Distribution</h2>
+        <canvas id="bottleChart"></canvas>
+    </div>
+</div>
+
+<!-- Submissions Table -->
+<div class="bg-white shadow rounded overflow-x-auto">
+    <table class="min-w-full border">
+        <thead class="bg-gray-200">
+            <tr>
+                <th class="px-4 py-2 border">Date</th>
+                <th class="px-4 py-2 border">Staff</th>
+                <th class="px-4 py-2 border">Resident</th>
+                <th class="px-4 py-2 border">Total Points</th>
+                <th class="px-4 py-2 border">Bottle Data</th>
+                <th class="px-4 py-2 border">Source</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for sub in submissions %}
+            <tr class="hover:bg-gray-100">
+                <td class="px-4 py-2 border">{{ sub.created_at|date:"Y-m-d H:i" }}</td>
+                <td class="px-4 py-2 border">{{ sub.staff.name }}</td>
+                <td class="px-4 py-2 border">
+                    {% if sub.user %} {{ sub.user.name }} {% else %} Unassigned {% endif %}
+                </td>
+                <td class="px-4 py-2 border">{{ sub.total_points }}</td>
+                <td class="px-4 py-2 border">
+                    {% for b in sub.bottle_data %}
+                        {{ b.size }} - {{ b.quantity }}<br>
+                    {% endfor %}
+                </td>
+                <td class="px-4 py-2 border">{{ sub.source }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="6" class="px-4 py-4 border text-center text-gray-500">
+                    No submissions found for this site.
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Chart.js + Data Labels Plugin -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels"></script>
+<script>
+    const dailyLabels = JSON.parse('{{ daily_labels|escapejs }}');
+    const dailyValues = JSON.parse('{{ daily_values|escapejs }}');
+    const bottleLabels = JSON.parse('{{ bottle_labels|escapejs }}');
+    const bottleValues = JSON.parse('{{ bottle_values|escapejs }}');
+
+    // Total for bottle percentage calc
+    const totalBottles = bottleValues.reduce((a, b) => a + b, 0);
+
+    // Daily Submissions Chart
+    new Chart(document.getElementById('dailyChart'), {
+        type: 'line',
+        data: {
+            labels: dailyLabels,
+            datasets: [{
+                label: 'Submissions',
+                data: dailyValues,
+                borderColor: '#10B981',
+                backgroundColor: 'rgba(16, 185, 129, 0.2)',
+                fill: true,
+                tension: 0.3,
+                pointBackgroundColor: '#10B981'
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: { 
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return `${context.raw} submissions`;
+                        }
+                    }
+                }
+            },
+            scales: { y: { beginAtZero: true } }
+        }
+    });
+
+    // Bottle Size Distribution Chart
+    new Chart(document.getElementById('bottleChart'), {
+        type: 'bar',
+        data: {
+            labels: bottleLabels,
+            datasets: [{
+                label: 'Quantity',
+                data: bottleValues,
+                backgroundColor: [
+                    'rgba(59, 130, 246, 0.6)',
+                    'rgba(16, 185, 129, 0.6)',
+                    'rgba(245, 158, 11, 0.6)',
+                    'rgba(239, 68, 68, 0.6)',
+                    'rgba(99, 102, 241, 0.6)'
+                ],
+                borderColor: '#fff',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const value = context.raw;
+                            const percentage = ((value / totalBottles) * 100).toFixed(1);
+                            return `${value} bottles (${percentage}%)`;
+                        }
+                    }
+                },
+                datalabels: {
+                    anchor: 'end',
+                    align: 'top',
+                    formatter: (value) => {
+                        const percentage = ((value / totalBottles) * 100).toFixed(1);
+                        return `${value} (${percentage}%)`;
+                    },
+                    font: { weight: 'bold' }
+                }
+            },
+            scales: { y: { beginAtZero: true } }
+        },
+        plugins: [ChartDataLabels]
+    });
+</script>
+
+{% endblock %}

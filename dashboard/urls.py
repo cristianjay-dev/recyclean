@@ -31,6 +31,8 @@ urlpatterns = [
     path('api/staff/metrics/<int:staff_id>/', views.staff_metrics, name='staff_metrics'),
     path('api/process-qr-submission/', views.process_qr_submission, name='process_qr_submission'),
     path('api/staff/<int:staff_id>/transactions/', views.staff_transaction_history, name='staff_transaction_history'),
+    path('dropoff-sites/<int:site_id>/', views.dropoff_site_detail, name='dropoff_site_detail'),
+
 
 
 

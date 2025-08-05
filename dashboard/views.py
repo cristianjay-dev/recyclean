@@ -14,9 +14,9 @@ from .payrex_api import get_balance
 
 from django.views.decorators.http import require_POST
 
-import json
+
 from django.utils.timezone import now, timedelta
-from django.db.models import Q
+from django.db.models import Q, Sum
 
 import uuid, json
 import cv2
@@ -25,6 +25,8 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from collections import Counter
+
 
 
 
@@ -390,6 +392,15 @@ def reject_staff(request, user_id):
 
 
 # Staff Dashboard Metrics
+
+def submissions_by_dropoff_site(request, site_id):
+    site = get_object_or_404(DropOffSite, id=site_id)
+    submissions = Submission.objects.filter(dropoff_site=site).select_related('staff', 'user').order_by('-created_at')
+    return render(request, 'submissions_by_site.html', {
+        'site': site,
+        'submissions': submissions
+    })
+
 @csrf_exempt
 def staff_metrics(request, staff_id):
     try:
@@ -518,3 +529,77 @@ def staff_transaction_history(request, staff_id):
         })
     return Response({"success": True, "transactions": data})
  
+ 
+ 
+def dropoff_site_detail(request, site_id):
+    site = get_object_or_404(DropOffSite, id=site_id)
+
+    # Get submissions for this site
+    submissions = Submission.objects.filter(dropoff_site=site).select_related('staff', 'user').order_by('-created_at')
+
+    # Calculate metrics
+    total_submissions = submissions.count()
+    total_points = submissions.aggregate(total=Sum('total_points'))['total'] or 0
+    total_bottles = sum(
+        sum(bottle.get('quantity', 0) for bottle in sub.bottle_data)
+        for sub in submissions
+    )
+
+    return render(request, 'dropoff_site_detail.html', {
+        'site': site,
+        'submissions': submissions,
+        'total_submissions': total_submissions,
+        'total_points': total_points,
+        'total_bottles': total_bottles
+    })
+    
+
+# Data Visualization for Drop-off Site Detail
+def dropoff_site_detail(request, site_id):
+    site = get_object_or_404(DropOffSite, id=site_id)
+    submissions = Submission.objects.filter(
+        dropoff_site=site
+    ).select_related('staff', 'user').order_by('-created_at')
+
+    # 📊 Metrics
+    total_submissions = submissions.count()
+    total_points = submissions.aggregate(total=Sum('total_points'))['total'] or 0
+    total_bottles = sum(
+        sum(bottle.get('quantity', 0) for bottle in sub.bottle_data)
+        for sub in submissions
+    )
+
+    # 📈 Daily submissions for last 7 days
+    today = timezone.now().date()
+    last_7_days = [today - timedelta(days=i) for i in range(6, -1, -1)]
+    daily_counts = []
+    for day in last_7_days:
+        count = submissions.filter(created_at__date=day).count()
+        daily_counts.append({
+            'date': day.strftime("%b %d"),
+            'count': count
+        })
+
+    # 🥤 Bottle size distribution
+    bottle_counter = Counter()
+    for sub in submissions:
+        for bottle in sub.bottle_data:
+            size = bottle.get('size', 'Unknown')
+            qty = bottle.get('quantity', 0)
+            bottle_counter[size] += qty
+
+    bottle_labels = list(bottle_counter.keys())
+    bottle_values = list(bottle_counter.values())
+
+    return render(request, 'dropoff_site_detail.html', {
+        'site': site,
+        'submissions': submissions,
+        'total_submissions': total_submissions,
+        'total_points': total_points,
+        'total_bottles': total_bottles,
+        # Chart.js Data
+        'daily_labels': json.dumps([d['date'] for d in daily_counts]),
+        'daily_values': json.dumps([d['count'] for d in daily_counts]),
+        'bottle_labels': json.dumps(bottle_labels),
+        'bottle_values': json.dumps(bottle_values),
+    })

@@ -11,13 +11,17 @@
   </thead>
   <tbody>
     {% for site in sites %}
-    <tr class="border-t">
-      <td class="p-3">{{ site.barangay }}</td>
+    <tr 
+      class="border-t hover:bg-gray-100 cursor-pointer"
+      onclick="window.location.href='{% url 'dropoff_site_detail' site.id %}'">
+      <td class="p-3">
+        {{ site.barangay }}
+      </td>
       <td class="p-3">
         {% if site.assigned_staff %}
           {{ site.assigned_staff.name }}
         {% else %}
-          Unassigned
+          <span class="text-gray-500 italic">Unassigned</span>
         {% endif %}
       </td>
     </tr>
