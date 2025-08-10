@@ -1,34 +1,62 @@
-version: '3.9'
+version: "3.9"
 
 services:
   db:
     image: postgres:15
-    restart: always
+    restart: unless-stopped
     volumes:
-      - postgres_data:/var/lib/postgresql/data/
+      - postgres_data:/var/lib/postgresql/data
     environment:
       POSTGRES_DB: capstone_db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: Aspire5#073020
     ports:
       - "5432:5432"
+    networks:
+      - recyclean-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d capstone_db -h 127.0.0.1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   web:
     build: .
-    command: python manage.py runserver 0.0.0.0:8000
+    working_dir: /app
+    # Run migrations then start dev server
+    command: >
+      bash -lc "python manage.py migrate &&
+                python manage.py runserver 0.0.0.0:8000"
     volumes:
       - .:/app
     ports:
       - "8000:8000"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    # Load your .env.local into the container (Reloadly keys, etc.)
+    env_file:
+      - .env.local
     environment:
-      - DEBUG=True
-      - DB_NAME=capstone_db
-      - DB_USER=postgres
-      - DB_PASSWORD=Aspire5#073020
-      - DB_HOST=db
-      - DB_PORT=5432
+      DEBUG: "True"
+      DB_NAME: capstone_db
+      DB_USER: postgres
+      DB_PASSWORD: Aspire5#073020
+      DB_HOST: db
+      DB_PORT: "5432"
+      TZ: Asia/Manila
+      PYTHONUNBUFFERED: "1"
+    # Optional DNS (usually not needed, but keeping since you had it)
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    networks:
+      - recyclean-net
+    restart: unless-stopped
+
+networks:
+  recyclean-net:
+    driver: bridge
 
 volumes:
   postgres_data:

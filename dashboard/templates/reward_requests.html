@@ -1,63 +1,148 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block content %}
 <div class="p-6">
 
-  <!-- ✅ Payrex Balance Display -->
-  {% if payrex_error %}
-    <div class="bg-red-100 text-red-800 p-3 rounded mb-4">
-      ⚠️ Payrex Error: {{ payrex_error }}
+  <!-- Reloadly Wallet Balance -->
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+    <div class="bg-white p-4 rounded-lg shadow">
+      <h3 class="text-sm font-medium text-gray-500">Reloadly Wallet Balance</h3>
+      {% if reloadly_error %}
+        <p class="text-sm text-red-600">{{ reloadly_error }}</p>
+      {% elif reloadly_balance is not None %}
+        <p class="text-2xl font-bold text-blue-600">
+          {% if reloadly_currency_symbol %}{{ reloadly_currency_symbol }}{% endif %}{{ reloadly_balance }}
+          <span class="text-sm text-gray-500">{{ reloadly_currency|default:"PHP" }}</span>
+        </p>
+        {% if reloadly_updated_at %}
+          <p class="text-xs text-gray-500 mt-1">Updated: {{ reloadly_updated_at }}</p>
+        {% endif %}
+      {% else %}
+        <p class="text-gray-500">Loading...</p>
+      {% endif %}
     </div>
-  {% elif payrex_balance %}
-    <div class="bg-blue-100 text-blue-900 p-3 rounded mb-4">
-      💰 <strong>Payrex Balance:</strong> {{ payrex_balance }} PHP
+
+    <div class="bg-white p-4 rounded-lg shadow">
+      <h3 class="text-sm font-medium text-gray-500">Total Requests</h3>
+      <p class="text-2xl font-bold text-gray-800">{{ total_rewards }}</p>
     </div>
-  {% endif %}
+  </div>
 
-  <h1 class="text-2xl font-bold mb-4">Reward Requests</h1>
-
-  <div class="overflow-x-auto">
-    <table class="min-w-full bg-white border border-gray-300">
-      <thead>
-        <tr class="bg-gray-200 text-left">
-          <th class="py-2 px-4 border-b">User</th>
-          <th class="py-2 px-4 border-b">Mobile Number</th>
-          <th class="py-2 px-4 border-b">Amount</th>
-          <th class="py-2 px-4 border-b">Status</th>
-          <th class="py-2 px-4 border-b">Created</th>
-          <th class="py-2 px-4 border-b">Txn ID</th>
-          <th class="py-2 px-4 border-b">Note</th>
-          <th class="py-2 px-4 border-b">Action</th>
+  <!-- Reloadly Transactions (latest) -->
+  <h1 class="text-xl font-semibold mb-3">Reloadly Transactions</h1>
+  <div class="overflow-x-auto bg-white rounded-lg shadow mb-8">
+    <table class="min-w-full">
+      <thead class="bg-gray-100">
+        <tr class="text-left text-gray-600">
+          <th class="py-3 px-4 text-sm font-semibold">Txn ID</th>
+          <th class="py-3 px-4 text-sm font-semibold">Date</th>
+          <th class="py-3 px-4 text-sm font-semibold">Operator</th>
+          <th class="py-3 px-4 text-sm font-semibold">Phone</th>
+          <th class="py-3 px-4 text-sm font-semibold">Amount</th>
+          <th class="py-3 px-4 text-sm font-semibold">Status</th>
         </tr>
       </thead>
-      <tbody>
-        {% for request in reward_requests %}
+      <tbody class="divide-y divide-gray-200">
+        {% if reloadly_txns %}
+          {% for t in reloadly_txns %}
+          <tr class="hover:bg-gray-50">
+            <td class="py-3 px-4 text-xs font-mono text-gray-600">
+              {% firstof t.transactionId t.id "—" %}
+            </td>
+            <td class="py-3 px-4 text-sm text-gray-700">
+              {% firstof t.transactionDate t.date t.createdAt "—" %}
+            </td>
+            <td class="py-3 px-4 text-sm text-gray-700">
+              {% firstof t.operatorName "—" %}
+            </td>
+            <td class="py-3 px-4 text-sm text-gray-700">
+              {% firstof t.recipientPhone "—" %}
+            </td>
+            <td class="py-3 px-4 text-sm font-semibold text-gray-800">
+              {% firstof t.requestedAmount t.amount "—" %}
+              {% firstof t.requestedAmountCurrencyCode t.requestedCurrencyCode t.currencyCode t.deliveredAmountCurrencyCode "" %}
+            </td>
+            <td class="py-3 px-4">
+              {% with s=t.status|default:"" %}
+                {% if s|upper == 'SUCCESSFUL' or s|upper == 'SUCCESS' or s|upper == 'COMPLETED' %}
+                  <span class="px-2 py-1 text-xs font-semibold text-green-800 bg-green-100 rounded-full">Approved</span>
+                {% elif s|upper == 'PROCESSING' or s|upper == 'PENDING' or s|upper == 'REQUESTED' or s|upper == 'QUEUED' %}
+                  <span class="px-2 py-1 text-xs font-semibold text-yellow-800 bg-yellow-100 rounded-full">Processing</span>
+                {% elif s|upper == 'FAILED' or s|upper == 'REFUNDED' %}
+                  <span class="px-2 py-1 text-xs font-semibold text-red-800 bg-red-100 rounded-full">{{ s|title }}</span>
+                {% else %}
+                  <span class="px-2 py-1 text-xs font-semibold text-gray-800 bg-gray-100 rounded-full">{{ s|default:"—" }}</span>
+                {% endif %}
+              {% endwith %}
+            </td>
+          </tr>
+          {% endfor %}
+        {% else %}
+          <tr>
+            <td colspan="6" class="py-6 px-4 text-center text-gray-500">No Reloadly transactions yet.</td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Your internal RewardRequest log (now Reloadly-labeled) -->
+  <h2 class="text-xl font-semibold mb-3">Reward Transaction Log (App)</h2>
+  <p class="text-gray-600 mb-6">
+    These are the requests created inside your system. Status finalizes via Reloadly response/webhook.
+  </p>
+
+  <div class="overflow-x-auto bg-white rounded-lg shadow">
+    <table class="min-w-full">
+      <thead class="bg-gray-100">
+        <tr class="text-left text-gray-600">
+          <th class="py-3 px-4 font-semibold text-sm">User</th>
+          <th class="py-3 px-4 font-semibold text-sm">Mobile & Telco</th>
+          <th class="py-3 px-4 font-semibold text-sm">Amount</th>
+          <th class="py-3 px-4 font-semibold text-sm">Status</th>
+          <th class="py-3 px-4 font-semibold text-sm">Date Requested</th>
+          <th class="py-3 px-4 font-semibold text-sm">Reloadly Ref</th>
+          <th class="py-3 px-4 font-semibold text-sm">Note</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-200">
+        {% for rr in reward_requests %}
         <tr class="hover:bg-gray-50">
-          <td class="py-2 px-4 border-b">{{ request.user.name }}</td>
-          <td class="py-2 px-4 border-b">{{ request.mobile_number }}</td>
-          <td class="py-2 px-4 border-b">₱{{ request.load_amount }}</td>
-          <td class="py-2 px-4 border-b capitalize">{{ request.status }}</td>
-          <td class="py-2 px-4 border-b text-sm">{{ request.created_at|date:"M d, Y H:i" }}</td>
-          <td class="py-2 px-4 border-b text-xs">{{ request.payrex_txn_id|default:"—" }}</td>
-          <td class="py-2 px-4 border-b text-sm text-gray-700">{{ request.response_note|default:"—" }}</td>
-          <td class="py-2 px-4 border-b">
-            {% if request.status == 'pending' %}
-              <form method="POST" action="{% url 'approve_reward' request.id %}">
-                {% csrf_token %}
-                <button class="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm">Approve</button>
-              </form>
+          <td class="py-3 px-4">{{ rr.user.name }}</td>
+          <td class="py-3 px-4">
+            <div>{{ rr.mobile_number }}</div>
+            <div class="text-xs text-gray-500">{{ rr.telco }}</div>
+          </td>
+          <td class="py-3 px-4 font-semibold text-gray-800">
+            {% if reloadly_currency_symbol %}{{ reloadly_currency_symbol }}{% else %}₱{% endif %}{{ rr.amount }}
+            <span class="text-xs text-gray-500">{{ reloadly_currency|default:"PHP" }}</span>
+          </td>
+          <td class="py-3 px-4">
+            {% if rr.status == 'approved' or rr.status == 'succeeded' or rr.status == 'completed' %}
+              <span class="px-2 py-1 text-xs font-semibold text-green-800 bg-green-100 rounded-full">Approved</span>
+            {% elif rr.status == 'processing' or rr.status == 'pending' %}
+              <span class="px-2 py-1 text-xs font-semibold text-yellow-800 bg-yellow-100 rounded-full">Processing</span>
+            {% elif rr.status == 'failed' or rr.status == 'refunded' %}
+              <span class="px-2 py-1 text-xs font-semibold text-red-800 bg-red-100 rounded-full">{{ rr.status|title }}</span>
             {% else %}
-              <span class="text-green-700 font-semibold">✓ Approved</span>
+              <span class="px-2 py-1 text-xs font-semibold text-gray-800 bg-gray-100 rounded-full capitalize">{{ rr.status|default:"—" }}</span>
             {% endif %}
           </td>
+          <td class="py-3 px-4 text-sm text-gray-600">{{ rr.date_requested|date:"M d, Y H:i" }}</td>
+          <td class="py-3 px-4 text-xs font-mono text-gray-500">
+            {{ rr.reloadly_ref|default:"—" }}
+          </td>
+          <td class="py-3 px-4 text-sm text-gray-700 max-w-xs truncate">{{ rr.response_note|default:"—" }}</td>
         </tr>
         {% empty %}
         <tr>
-          <td colspan="8" class="py-4 px-4 text-center text-gray-500">No reward requests found.</td>
+          <td colspan="7" class="py-6 px-4 text-center text-gray-500">No reward requests have been made yet.</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
+
 </div>
 {% endblock %}

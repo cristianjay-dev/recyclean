@@ -18,14 +18,24 @@
   </div>
 </div>
 
-<!-- Payrex Wallet Section -->
+<!-- Reloadly Wallet Section -->
 <div class="mt-8">
   <div class="bg-white shadow rounded-lg p-6">
-    <h2 class="text-xl font-semibold mb-2">Payrex Wallet</h2>
-    {% if payrex_balance %}
-      <p class="text-gray-700"><strong>Balance:</strong> ₱{{ payrex_balance }}</p>
+    <h2 class="text-xl font-semibold mb-2">Reloadly Wallet</h2>
+
+    {% if reloadly_balance is not None %}
+      <p class="text-gray-700">
+        <strong>Balance:</strong>
+        {% if reloadly_currency_symbol %}{{ reloadly_currency_symbol }}{% else %}₱{% endif %}{{ reloadly_balance }}
+        {% if reloadly_currency_code %}
+          <span class="text-xs text-gray-500">({{ reloadly_currency_code }})</span>
+        {% endif %}
+      </p>
+      {% if reloadly_updated_at %}
+        <p class="text-xs text-gray-500 mt-1">Updated: {{ reloadly_updated_at }}</p>
+      {% endif %}
     {% else %}
-      <p class="text-red-500">Unable to fetch Payrex balance.</p>
+      <p class="text-red-500">Unable to fetch Reloadly balance.</p>
     {% endif %}
   </div>
 </div>

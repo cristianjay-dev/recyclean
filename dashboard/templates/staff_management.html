@@ -1,0 +1,166 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">Staff Management</h1>
+
+<!-- PENDING STAFF -->
+<h2 class="text-xl font-semibold mb-2">Pending Staff Requests</h2>
+<table class="min-w-full bg-white rounded shadow mb-8">
+  <thead class="bg-gray-200">
+    <tr>
+      <th class="p-3">Name</th>
+      <th class="p-3">Barangay</th>
+      <th class="p-3">Mobile</th>
+      <th class="p-3 text-center">Actions</th>
+    </tr>
+  </thead>
+  <tbody id="pending-staff-body">
+    {% for staff in pending_staff %}
+    <tr id="staff-row-{{ staff.id }}">
+      <td class="p-3">{{ staff.name }}</td>
+      <td class="p-3">{{ staff.barangay }}</td>
+      <td class="p-3">{{ staff.mobile_number }}</td>
+      <td class="p-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="approveStaff({{ staff.id }})"
+                  class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded">
+            Approve
+          </button>
+          <button onclick="rejectStaff({{ staff.id }})"
+                  class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded">
+            Reject
+          </button>
+        </div>
+      </td>
+    </tr>
+    {% empty %}
+    <tr id="no-pending"><td colspan="4" class="p-3 text-gray-500 text-center">No pending staff.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<!-- ACTIVE STAFF -->
+<h2 class="text-xl font-semibold mb-2">Active Staff</h2>
+<table class="min-w-full bg-white rounded shadow">
+  <thead class="bg-gray-200">
+    <tr>
+      <th class="p-3">Name</th>
+      <th class="p-3">Barangay</th>
+      <th class="p-3">Mobile</th>
+      <th class="p-3 text-center">Actions</th>
+    </tr>
+  </thead>
+  <tbody id="active-staff-body">
+    {% for staff in active_staff %}
+    <tr id="active-row-{{ staff.id }}">
+      <td class="p-3">{{ staff.name }}</td>
+      <td class="p-3">{{ staff.barangay }}</td>
+      <td class="p-3">{{ staff.mobile_number }}</td>
+      <td class="p-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="viewTransactions({{ staff.id }}, '{{ staff.name }}')"
+                  class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded">
+            View Transactions
+          </button>
+          <button onclick="deleteStaff({{ staff.id }})"
+                  class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded">
+            Delete
+          </button>
+        </div>
+      </td>
+    </tr>
+    {% empty %}
+    <tr id="no-active"><td colspan="4" class="p-3 text-gray-500 text-center">No active staff.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<script>
+function approveStaff(staffId) {
+  fetch(`/approve-staff/${staffId}/`, {
+    method: "POST",
+    headers: { "X-CSRFToken": "{{ csrf_token }}" }
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.success) {
+      // Remove from pending table
+      document.getElementById(`staff-row-${staffId}`)?.remove();
+      if (!document.querySelector("#pending-staff-body tr")) {
+        document.getElementById("pending-staff-body").innerHTML =
+          `<tr id="no-pending"><td colspan="4" class="p-3 text-gray-500 text-center">No pending staff.</td></tr>`;
+      }
+
+      // Add to active table
+      const activeRow = `
+        <tr id="active-row-${data.staff.id}">
+          <td class="p-3">${data.staff.name}</td>
+          <td class="p-3">${data.staff.barangay}</td>
+          <td class="p-3">${data.staff.mobile}</td>
+          <td class="p-3">
+            <div class="flex justify-center gap-2">
+              <button onclick="viewTransactions(${data.staff.id}, '${data.staff.name}')"
+                      class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded">
+                View Transactions
+              </button>
+              <button onclick="deleteStaff(${data.staff.id})"
+                      class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded">
+                Delete
+              </button>
+            </div>
+          </td>
+        </tr>`;
+      if (document.getElementById("no-active")) {
+        document.getElementById("no-active").remove();
+      }
+      document.getElementById("active-staff-body").insertAdjacentHTML("beforeend", activeRow);
+
+      alert("✅ Staff approved successfully.");
+    } else {
+      alert(data.error || "Failed to approve staff.");
+    }
+  });
+}
+
+function rejectStaff(staffId) {
+  if (!confirm("Are you sure you want to reject this staff?")) return;
+  fetch(`/reject-staff/${staffId}/`, {
+    method: "POST",
+    headers: { "X-CSRFToken": "{{ csrf_token }}" }
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.success) {
+      document.getElementById(`staff-row-${staffId}`)?.remove();
+      if (!document.querySelector("#pending-staff-body tr")) {
+        document.getElementById("pending-staff-body").innerHTML =
+          `<tr id="no-pending"><td colspan="4" class="p-3 text-gray-500 text-center">No pending staff.</td></tr>`;
+      }
+      alert("❌ Staff rejected successfully.");
+    } else {
+      alert(data.error || "Failed to reject staff.");
+    }
+  });
+}
+
+function deleteStaff(staffId) {
+  if (!confirm("Are you sure you want to delete this staff?")) return;
+  fetch(`/delete-staff/${staffId}/`, {
+    method: "POST",
+    headers: { "X-CSRFToken": "{{ csrf_token }}" }
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.success) {
+      document.getElementById(`active-row-${staffId}`)?.remove();
+      if (!document.querySelector("#active-staff-body tr")) {
+        document.getElementById("active-staff-body").innerHTML =
+          `<tr id="no-active"><td colspan="4" class="p-3 text-gray-500 text-center">No active staff.</td></tr>`;
+      }
+      alert("🗑️ Staff deleted successfully.");
+    } else {
+      alert(data.error || "Failed to delete staff.");
+    }
+  });
+}
+</script>
+{% endblock %}

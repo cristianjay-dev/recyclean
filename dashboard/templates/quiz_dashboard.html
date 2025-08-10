@@ -3,201 +3,175 @@
 {% block content %}
 
 <div class="p-6">
-    <h1 class="text-2xl font-bold mb-6">Quiz Management Dashboard</h1>
+    <h1 class="text-2xl font-bold mb-4">Quiz Question Management</h1>
+    <p class="text-gray-600 mb-6">Add, edit, or delete questions from the central pool. These questions will be used to dynamically generate Daily and Weekly quizzes for users.</p>
 
-    <!-- Create Quiz Category Button -->
-    <button onclick="document.getElementById('categoryModal').classList.remove('hidden')"
-            class="mb-4 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
-        Create Quiz Category
+    <!-- Add New Question Button -->
+    <button onclick="openAddModal()"
+            class="mb-6 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-md flex items-center">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" /></svg>
+        Add New Question
     </button>
 
-    <!-- List of Categories -->
-    {% for category in categories %}
-    <div class="border rounded p-4 mb-4 bg-white shadow">
-        <div class="flex flex-wrap justify-between gap-4 mb-2">
-            <div class="flex-1 min-w-0">
-                <h2 class="text-lg font-semibold">{{ category.category_name }}</h2>
-                <p class="text-sm text-gray-600 truncate whitespace-normal break-words">{{ category.description }}</p>
-            </div>
-            <div class="flex flex-shrink-0 space-x-2 items-start">
-                <button onclick="toggleDropdown('questions_{{ category.id }}')"
-                        class="bg-gray-200 hover:bg-gray-300 text-sm px-3 py-1 rounded">View Questions</button>
-                <button onclick="openAddQuestionModal({{ category.id }})"
-                        class="bg-green-200 hover:bg-green-300 text-green-800 text-sm px-3 py-1 rounded">Add Question</button>
-                <button onclick="deleteCategory({{ category.id }})"
-                        class="bg-red-100 hover:bg-red-200 text-red-600 text-sm px-3 py-1 rounded">Delete Category</button>
-            </div>
-        </div>
+    <!-- Question Pool -->
+    <div class="bg-white p-6 rounded-lg shadow-lg">
+        <h2 class="text-xl font-semibold mb-4 border-b pb-2">Question Pool ({{ questions.count }} total)</h2>
+        <div class="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+            {% for quiz in questions %}
+            <div class="border rounded p-4 bg-gray-50 hover:bg-gray-100 transition-colors">
+                <div class="flex justify-between items-start">
+                    <p class="font-semibold flex-1 pr-4">{{ quiz.question }}</p>
+                    <span class="text-xs font-bold uppercase ml-4 px-2 py-1 rounded-full whitespace-nowrap
+                        {% if quiz.question_type == 'true_false' %}bg-purple-200 text-purple-800{% else %}bg-green-200 text-green-800{% endif %}">
+                        {{ quiz.get_question_type_display }}
+                    </span>
+                </div>
+                
+                {% if quiz.question_type == 'multiple_choice' %}
+                <ul class="ml-4 mt-2 text-sm text-gray-700 list-disc list-inside">
+                    <li class="{% if quiz.correct_option == 'a' %}text-green-600 font-bold{% endif %}">A: {{ quiz.option_a }}</li>
+                    <li class="{% if quiz.correct_option == 'b' %}text-green-600 font-bold{% endif %}">B: {{ quiz.option_b }}</li>
+                    <li class="{% if quiz.correct_option == 'c' %}text-green-600 font-bold{% endif %}">C: {{ quiz.option_c }}</li>
+                    <li class="{% if quiz.correct_option == 'd' %}text-green-600 font-bold{% endif %}">D: {{ quiz.option_d }}</li>
+                </ul>
+                {% else %}
+                <p class="text-sm mt-2">Correct Answer: <span class="font-bold text-green-600">{{ quiz.correct_option|title }}</span></p>
+                {% endif %}
 
-        <!-- Questions Dropdown -->
-        <div id="questions_{{ category.id }}" class="hidden mt-2">
-            {% if category.quiz_set.all %}
-            <ul class="pl-4 list-disc text-sm space-y-4">
-                {% for quiz in category.quiz_set.all %}
-                <li>
-                    <p class="font-semibold">{{ quiz.question }}</p>
-                    <ul class="ml-4 mt-1 text-sm">
-                        <li>A: {{ quiz.option_a }}{% if quiz.correct_option == "a" %} ✅{% endif %}</li>
-                        <li>B: {{ quiz.option_b }}{% if quiz.correct_option == "b" %} ✅{% endif %}</li>
-                        <li>C: {{ quiz.option_c }}{% if quiz.correct_option == "c" %} ✅{% endif %}</li>
-                        <li>D: {{ quiz.option_d }}{% if quiz.correct_option == "d" %} ✅{% endif %}</li>
-                        <li class="text-green-700 mt-1">Points: {{ quiz.points }}</li>
-                    </ul>
-                    <div class="mt-2 space-x-2">
-                        <button onclick="openEditQuestionModal(
-                            {{ quiz.id }},
-                            '{{ quiz.question|escapejs }}',
-                            '{{ quiz.option_a|escapejs }}',
-                            '{{ quiz.option_b|escapejs }}',
-                            '{{ quiz.option_c|escapejs }}',
-                            '{{ quiz.option_d|escapejs }}',
-                            '{{ quiz.correct_option }}',
-                            '{{ quiz.points }}',
-                            '{{ quiz.feedback|default_if_none:""|escapejs }}',
-                            {{ category.id }}  <!-- ✅ Add category ID here -->
-                        )" class="bg-blue-100 hover:bg-blue-200 text-blue-600 px-2 py-1 text-sm rounded">
-                            Edit
-                        </button>
-
-                        <button onclick="deleteQuestion({{ quiz.id }})"
-                                class="bg-red-100 hover:bg-red-200 text-red-600 px-2 py-1 text-sm rounded">Delete</button>
-                    </div>
-                </li>
-                {% endfor %}
-            </ul>
-            {% else %}
-            <p class="italic text-gray-500 mt-2">No questions added to this category yet.</p>
-            {% endif %}
+                <div class="mt-3 flex items-center justify-end space-x-2">
+                    <button onclick="openEditModal(
+                        {{ quiz.id }},
+                        '{{ quiz.question_type }}',
+                        '{{ quiz.question|escapejs }}',
+                        '{{ quiz.option_a|default_if_none:""|escapejs }}',
+                        '{{ quiz.option_b|default_if_none:""|escapejs }}',
+                        '{{ quiz.option_c|default_if_none:""|escapejs }}',
+                        '{{ quiz.option_d|default_if_none:""|escapejs }}',
+                        '{{ quiz.correct_option }}',
+                        '{{ quiz.points }}'
+                    )" class="bg-yellow-100 hover:bg-yellow-200 text-yellow-800 px-3 py-1 text-sm rounded">Edit</button>
+                    <button onclick="deleteQuestion({{ quiz.id }})" class="bg-red-100 hover:bg-red-200 text-red-600 px-3 py-1 text-sm rounded">Delete</button>
+                </div>
+            </div>
+            {% empty %}
+            <p class="italic text-gray-500 text-center py-4">No questions have been added to the pool yet. Click "Add New Question" to start!</p>
+            {% endfor %}
         </div>
     </div>
-    {% empty %}
-    <p class="italic text-gray-500">No quiz categories available.</p>
-    {% endfor %}
 </div>
 
-<!-- Create Category Modal -->
-<div id="categoryModal" class="hidden fixed inset-0 z-50 bg-black bg-opacity-40 flex items-center justify-center">
-    <div class="bg-white p-6 rounded shadow-xl w-full max-w-lg relative">
-        <button onclick="document.getElementById('categoryModal').classList.add('hidden')"
-                class="absolute top-2 right-4 text-gray-500 text-xl font-bold">×</button>
-        <h2 class="text-xl font-bold mb-4">Create New Quiz Category</h2>
-        <form method="post" action="{% url 'create_category' %}" class="space-y-4">
+<!-- Add/Edit Modal -->
+<div id="quizModal" class="hidden fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center">
+    <div class="bg-white p-6 rounded-lg shadow-xl w-full max-w-lg relative">
+        <button onclick="closeModal()" class="absolute top-2 right-4 text-gray-500 text-xl font-bold">×</button>
+        <h2 id="modalTitle" class="text-xl font-bold mb-4"></h2>
+        <form id="quizForm" method="post" class="space-y-4">
             {% csrf_token %}
-            <div><label class="block text-sm font-semibold">Category Name</label>{{ category_form.category_name }}</div>
-            <div><label class="block text-sm font-semibold">Description</label>{{ category_form.description }}</div>
-            <button class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded">Create Category</button>
+            <input type="hidden" id="quiz_id" name="quiz_id" value="">
+
+            <div><label for="id_question_type" class="block text-sm font-medium">Question Type</label>{{ form.question_type }}</div>
+            <div><label for="id_question" class="block text-sm font-medium">Question Text</label>{{ form.question }}</div>
+
+            <!-- Multiple Choice Options Wrapper -->
+            <div id="mc-options-wrapper" class="hidden space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div><label for="id_option_a" class="block text-sm font-medium">Option A</label>{{ form.option_a }}</div>
+                    <div><label for="id_option_b" class="block text-sm font-medium">Option B</label>{{ form.option_b }}</div>
+                    <div><label for="id_option_c" class="block text-sm font-medium">Option C</label>{{ form.option_c }}</div>
+                    <div><label for="id_option_d" class="block text-sm font-medium">Option D</label>{{ form.option_d }}</div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <div><label for="id_correct_option" class="block text-sm font-medium">Correct Answer</label>{{ form.correct_option }}</div>
+                <div><label for="id_points" class="block text-sm font-medium">Points Value</label>{{ form.points }}</div>
+            </div>
+
+            <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">Save Question</button>
         </form>
     </div>
 </div>
 
-<!-- Add Question Modal -->
-<div id="questionModal" class="hidden fixed inset-0 z-50 bg-black bg-opacity-40 flex items-center justify-center">
-    <div class="bg-white p-6 rounded shadow-xl w-full max-w-lg relative">
-        <button onclick="closeQuestionModal()" class="absolute top-2 right-4 text-gray-500 text-xl font-bold">×</button>
-        <h2 class="text-xl font-bold mb-4">Add Question</h2>
-        <form id="questionForm" method="post" class="space-y-4">
-            {% csrf_token %}
-            <input type="hidden" id="modal_category_id" name="category" value="">
-            {{ form.question.label_tag }}{{ form.question }}
-            {{ form.option_a.label_tag }}{{ form.option_a }}
-            {{ form.option_b.label_tag }}{{ form.option_b }}
-            {{ form.option_c.label_tag }}{{ form.option_c }}
-            {{ form.option_d.label_tag }}{{ form.option_d }}
-            {{ form.correct_option.label_tag }}{{ form.correct_option }}
-            {{ form.points.label_tag }}{{ form.points }}
-            {{ form.feedback.label_tag }}{{ form.feedback }}
-            <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">Add Question</button>
-        </form>
-    </div>
-</div>
 
-<!-- Edit Question Modal -->
-<div id="editModal" class="hidden fixed inset-0 z-50 bg-black bg-opacity-40 flex items-center justify-center">
-    <div class="bg-white p-6 rounded shadow-xl w-full max-w-lg relative">
-        <button onclick="closeEditModal()" class="absolute top-2 right-4 text-gray-500 text-xl font-bold">×</button>
-        <h2 class="text-xl font-bold mb-4">Edit Question</h2>
-        <form id="editForm" method="post" class="space-y-4">
-            {% csrf_token %}
-            <input type="hidden" id="edit_question_id" name="quiz_id" value="">
-            <input type="hidden" id="edit_category_id" name="category" value=""> <!-- ✅ ADDED -->
-
-            <label class="block text-sm font-semibold">Question</label>
-            <input type="text" id="edit_question" name="question" class="w-full p-2 border rounded">
-
-            <label>Option A</label>
-            <input type="text" id="edit_option_a" name="option_a" class="w-full p-2 border rounded">
-
-            <label>Option B</label>
-            <input type="text" id="edit_option_b" name="option_b" class="w-full p-2 border rounded">
-
-            <label>Option C</label>
-            <input type="text" id="edit_option_c" name="option_c" class="w-full p-2 border rounded">
-
-            <label>Option D</label>
-            <input type="text" id="edit_option_d" name="option_d" class="w-full p-2 border rounded">
-
-            <label>Correct Option</label>
-            <select id="edit_correct_option" name="correct_option" class="w-full p-2 border rounded">
-                <option value="a">A</option>
-                <option value="b">B</option>
-                <option value="c">C</option>
-                <option value="d">D</option>
-            </select>
-
-            <label>Points</label>
-            <input type="number" id="edit_points" name="points" min="1" class="w-full p-2 border rounded">
-
-            <label>Feedback</label>
-            <textarea id="edit_feedback" name="feedback" class="w-full p-2 border rounded"></textarea>
-
-            <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
-                Update Question
-            </button>
-        </form>
-    </div>
-</div>
-
-<!-- Scripts -->
+<!-- SCRIPT SECTION -->
 <script>
-function toggleDropdown(id) {
-    document.getElementById(id).classList.toggle('hidden');
+const questionTypeSelect = document.getElementById('id_question_type');
+const mcOptionsWrapper = document.getElementById('mc-options-wrapper');
+const correctOptionSelect = document.getElementById('id_correct_option');
+const quizForm = document.getElementById('quizForm');
+const modal = document.getElementById('quizModal');
+const modalTitle = document.getElementById('modalTitle');
+const quizIdInput = document.getElementById('quiz_id');
+
+// This function dynamically changes the form based on the selected question type
+function handleQuestionTypeChange() {
+    const selectedType = questionTypeSelect.value;
+    
+    // Clear previous options from the "Correct Answer" dropdown
+    correctOptionSelect.innerHTML = '';
+
+    if (selectedType === 'multiple_choice') {
+        mcOptionsWrapper.classList.remove('hidden');
+        ['A', 'B', 'C', 'D'].forEach(opt => {
+            const option = new Option(opt, opt.toLowerCase());
+            correctOptionSelect.add(option);
+        });
+    } else if (selectedType === 'true_false') {
+        mcOptionsWrapper.classList.add('hidden');
+        ['True', 'False'].forEach(opt => {
+            const option = new Option(opt, opt.toLowerCase());
+            correctOptionSelect.add(option);
+        });
+    } else {
+        mcOptionsWrapper.classList.add('hidden');
+    }
 }
 
-function openAddQuestionModal(categoryId) {
-    document.getElementById('modal_category_id').value = categoryId;
-    document.getElementById('questionModal').classList.remove('hidden');
+questionTypeSelect.addEventListener('change', handleQuestionTypeChange);
+
+// Functions to open/close the modal for adding or editing
+function openAddModal() {
+    modalTitle.textContent = 'Add New Question';
+    quizForm.reset();
+    quizIdInput.value = ''; // Clear ID for creation
+    mcOptionsWrapper.classList.add('hidden');
+    correctOptionSelect.innerHTML = '';
+    modal.classList.remove('hidden');
 }
 
-function closeQuestionModal() {
-    document.getElementById('questionModal').classList.add('hidden');
-    document.getElementById('questionForm').reset();
+function openEditModal(id, type, q, a, b, c, d, correct, points) {
+    modalTitle.textContent = 'Edit Question';
+    quizForm.reset();
+    
+    quizIdInput.value = id;
+    questionTypeSelect.value = type;
+    
+    // Trigger the change handler to set up the form correctly BEFORE filling it
+    handleQuestionTypeChange();
+    
+    document.getElementById('id_question').value = q;
+    document.getElementById('id_option_a').value = a;
+    document.getElementById('id_option_b').value = b;
+    document.getElementById('id_option_c').value = c;
+    document.getElementById('id_option_d').value = d;
+    correctOptionSelect.value = correct;
+    document.getElementById('id_points').value = points;
+    
+    modal.classList.remove('hidden');
 }
 
-function openEditQuestionModal(id, q, a, b, c, d, correct, points, feedback, categoryId) {
-    document.getElementById('edit_question_id').value = id;
-    document.getElementById('edit_question').value = q;
-    document.getElementById('edit_option_a').value = a;
-    document.getElementById('edit_option_b').value = b;
-    document.getElementById('edit_option_c').value = c;
-    document.getElementById('edit_option_d').value = d;
-    document.getElementById('edit_correct_option').value = correct;
-    document.getElementById('edit_points').value = points;
-    document.getElementById('edit_feedback').value = feedback || '';
-    document.getElementById('edit_category_id').value = categoryId;  // ✅ Set category
-    document.getElementById('editModal').classList.remove('hidden');
+function closeModal() {
+    modal.classList.add('hidden');
 }
 
-function closeEditModal() {
-    document.getElementById('editModal').classList.add('hidden');
-    document.getElementById('editForm').reset();
-}
-
-document.getElementById('questionForm').addEventListener('submit', function (e) {
+// Single form submission handler for both creating and updating
+quizForm.addEventListener('submit', function(e) {
     e.preventDefault();
-    const categoryId = document.getElementById('modal_category_id').value;
+    const quizId = quizIdInput.value;
+    const isEditing = !!quizId;
+    const url = isEditing ? `{% url 'update_question' 0 %}`.replace('0', quizId) : `{% url 'create_quiz' %}`;
+    
     const formData = new FormData(this);
-
-    const url = `{% url 'add_question_to_category' 0 %}`.replace('0', categoryId);
 
     fetch(url, {
         method: 'POST',
@@ -207,87 +181,39 @@ document.getElementById('questionForm').addEventListener('submit', function (e) 
     .then(res => res.json())
     .then(data => {
         if (data.success) {
-            alert("✅ Question added successfully.");
+            alert(`✅ Question ${isEditing ? 'updated' : 'added'} successfully.`);
             location.reload();
         } else {
-            alert("❌ Error:\n" + JSON.stringify(data.errors || data));
+            // Display validation errors nicely
+            let errorMsg = "❌ An error occurred.\n";
+            if (data.errors) {
+                for (const field in data.errors) {
+                    errorMsg += `${field}: ${data.errors[field][0]}\n`;
+                }
+            } else {
+                errorMsg += data.error || 'Unknown error';
+            }
+            alert(errorMsg);
         }
     });
 });
 
-document.getElementById('editForm').addEventListener('submit', function (e) {
-    e.preventDefault();
-    const quizId = document.getElementById('edit_question_id').value;
-    const formData = new FormData(this);
-
-    const url = `{% url 'update_question' 0 %}`.replace('0', quizId);
-
-    fetch(url, {
-        method: 'POST',
-        body: formData,
-        headers: { 'X-CSRFToken': formData.get('csrfmiddlewaretoken') }
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            alert("✅ Question updated successfully.");
-            closeEditModal();
-            location.reload();
-        } else if (data.errors) {
-            alert("❌ Validation error:\n" + JSON.stringify(data.errors, null, 2));
-        } else {
-            alert("❌ Failed to update question.");
-        }
-    })
-    .catch(err => {
-        console.error("Update error:", err);
-        alert("❌ An error occurred while updating.");
-    });
-});
-
+// Delete function (unchanged, but now works with the new layout)
 function deleteQuestion(id) {
-    if (confirm("Are you sure you want to delete this question?")) {
+    if (confirm("Are you sure you want to permanently delete this question?")) {
         const url = `{% url 'delete_question' 0 %}`.replace('0', id);
         fetch(url, {
             method: 'POST',
-            headers: {
-                'X-CSRFToken': getCSRFToken(),
-                'Content-Type': 'application/json'
+            headers: { 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value }
+        }).then(res => res.json()).then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                alert("❌ Failed to delete question: " + (data.error || 'Unknown error'));
             }
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) location.reload();
-            else alert("❌ Failed to delete question.");
         });
     }
 }
-
-function deleteCategory(id) {
-    if (confirm("Are you sure you want to delete this category?")) {
-        const url = `{% url 'delete_category' 0 %}`.replace('0', id);
-        fetch(url, {
-            method: 'POST',
-            headers: {
-                'X-CSRFToken': getCSRFToken(),
-                'Content-Type': 'application/json'
-            }
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) location.reload();
-            else alert(data.error || "❌ Unable to delete category.");
-        });
-    }
-}
-
-// Utility function to extract CSRF token
-function getCSRFToken() {
-    return document.querySelector('[name=csrfmiddlewaretoken]').value;
-}
-
 </script>
-
-
 
 {% endblock %}

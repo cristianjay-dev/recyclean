@@ -1,43 +1,47 @@
 from django import forms
-from .models import Quiz, QuizCategory, DropOffSite, User
+from .models import Quiz, DropOffSite, User
 
 
 class ManualQuizForm(forms.ModelForm):
+    # We define the choices here to use them in the template script.
+    QUESTION_TYPE_CHOICES = [
+        ('', '---------'), # Add a blank choice for the default state
+        ('multiple_choice', 'Multiple Choice'),
+        ('true_false', 'True/False'),
+    ]
+    
+    # Explicitly define the question_type field to control its widget and choices.
+    question_type = forms.ChoiceField(
+        choices=QUESTION_TYPE_CHOICES,
+        widget=forms.Select(attrs={
+            'class': 'w-full p-2 border rounded', 
+            'id': 'id_question_type' # Add an ID for easy JavaScript targeting
+        })
+    )
+
     class Meta:
         model = Quiz
         fields = [
-            'category', 'question', 'option_a', 'option_b',
-            'option_c', 'option_d', 'correct_option', 'points', 'feedback'
+            'question_type', 'question', 'option_a', 'option_b',
+            'option_c', 'option_d', 'correct_option', 'points'
         ]
         widgets = {
-            'category': forms.Select(attrs={'class': 'w-full p-2 border rounded'}),
             'question': forms.Textarea(attrs={'class': 'w-full p-2 border rounded', 'rows': 3}),
-            'option_a': forms.TextInput(attrs={'class': 'w-full p-2 border rounded'}),
-            'option_b': forms.TextInput(attrs={'class': 'w-full p-2 border rounded'}),
-            'option_c': forms.TextInput(attrs={'class': 'w-full p-2 border rounded'}),
-            'option_d': forms.TextInput(attrs={'class': 'w-full p-2 border rounded'}),
-            'correct_option': forms.Select(
-                choices=[('a', 'A'), ('b', 'B'), ('c', 'C'), ('d', 'D')],
-                attrs={'class': 'w-full p-2 border rounded'}
-            ),
+            
+            # These options are for 'multiple_choice' and will be hidden/shown by JavaScript.
+            # We add a class to them for easier selection in JS.
+            'option_a': forms.TextInput(attrs={'class': 'w-full p-2 border rounded mc-option'}),
+            'option_b': forms.TextInput(attrs={'class': 'w-full p-2 border rounded mc-option'}),
+            'option_c': forms.TextInput(attrs={'class': 'w-full p-2 border rounded mc-option'}),
+            'option_d': forms.TextInput(attrs={'class': 'w-full p-2 border rounded mc-option'}),
+            
+            # The options for this dropdown will be populated dynamically by JavaScript.
+            'correct_option': forms.Select(attrs={
+                'class': 'w-full p-2 border rounded', 
+                'id': 'id_correct_option' # Add an ID for easy targeting
+            }),
+            
             'points': forms.NumberInput(attrs={'class': 'w-full p-2 border rounded'}),
-            'feedback': forms.Textarea(attrs={'class': 'w-full p-2 border rounded', 'rows': 2}),
-        }
-
-    def __init__(self, *args, **kwargs):
-        hide_category = kwargs.pop('hide_category', False)
-        super().__init__(*args, **kwargs)
-        if hide_category:
-            self.fields['category'].widget = forms.HiddenInput()
-
-
-class QuizCategoryForm(forms.ModelForm):
-    class Meta:
-        model = QuizCategory
-        fields = ['category_name', 'description']
-        widgets = {
-            'category_name': forms.TextInput(attrs={'class': 'w-full p-2 border rounded'}),
-            'description': forms.Textarea(attrs={'class': 'w-full p-2 border rounded', 'rows': 2}),
         }
 
 
