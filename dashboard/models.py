@@ -1,4 +1,26 @@
+"""
+General Remarks:
+- remove ID fields because it is already provided automatically by django
+    data type of ID fields are indicated in settings.py --> DEFAULT_AUTO_FIELD
+- structure models via  availability of ForeignKey fields 
+    models with no FK field should be on top
+- Make your custom user model inherit from django's standard user model: https://docs.djangoproject.com/en/5.2/topics/auth/customizing/
+    After doing this, go to settings.py and add AUTH_MODEL = 'dashboard.User'
+
+
+Extras:
+- `User.user_type` can be removed and instead, use django's Group model
+- Create Barangay Model
+- Use https://nominatim.org/ for geolocation for complete barangay and automated
+- 
+"""
+
 from django.db import models
+
+# Imports by Jxst-Felix
+from django.contrib.auth.models import AbstractUser as StandardUserModel # this is the standard User model of django, inherit this for your custom user model
+from django.contrib.auth.models import Group # this is the Group model of django, you can assign this to users and you can assign certain permissions to users that belongs to this group
+
 
 # -------------------------
 # DROP-OFF SITE TABLE
@@ -25,6 +47,16 @@ class DropOffSite(models.Model):
 # USER TABLE (Residents & Staff)
 # -------------------------
 class User(models.Model):
+    """
+    Redundant models if inheriting from standard django user model:
+    - email
+    - password hash --> password
+    - date_joined
+    ---
+
+    Possible redundant fields:
+    - is_approved --> is_staff
+    """
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=255)
     email = models.CharField(max_length=255)
@@ -50,6 +82,15 @@ class User(models.Model):
 # SUBMISSIONS TABLE
 # -------------------------
 class Submission(models.Model):
+    """
+    Possible improvements:
+    - Use Many-to-Many fields on bottle_data
+    ---
+    
+    Extras:
+    - Use models.FileField for image_path
+    - Remember what the pupose of estimated_quantity and confidence_score
+    """
     # ... This model remains unchanged ...
     id = models.AutoField(primary_key=True)
     qr_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
@@ -92,6 +133,11 @@ class StaffTransaction(models.Model):
 # REWARD REQUESTS TABLE
 # -------------------------
 class RewardRequest(models.Model):
+    """
+    Remarks:
+    - change `amount` and `points_used`
+    - Refactor model
+    """
     # ... This model remains unchanged ...
     id = models.AutoField(primary_key=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE)

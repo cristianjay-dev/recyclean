@@ -1,3 +1,12 @@
+"""
+General Remarks:
+- endpoints should have a limited amount of request methods to use (POST, GET, DELETE)
+- use serializers: 
+    https://www.django-rest-framework.org/api-guide/serializers/ 
+    https://docs.djangoproject.com/en/5.2/topics/serialization/
+- use LOGGERS
+"""
+
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.hashers import make_password, check_password
 from django.http import JsonResponse, HttpResponse
@@ -34,6 +43,54 @@ from .services.reloadly import (
     ReloadlyError,   # ← add this
 )
 
+
+# import by Jxst-Felix
+import logging
+
+# created by Jxst-Felix
+LOGGER = logging.getLogger(__name__)
+
+# when logging
+LOGGER.info("You message here")
+
+# when error occurs
+LOGGER.error("error message here")
+
+# when something unexpected occurs but not an error
+LOGGER.warning("You message here")
+
+# Add this in settings.py
+"""
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'console': {
+            'format': '[%(asctime)s %(name)s] %(levelname)s [%(pathname)s:%(lineno)d] - %(message)s',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'console'
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False
+        },
+    },
+}
+
+Reference:
+https://docs.djangoproject.com/en/5.2/topics/logging/
+"""
 
 
 # ------------------ DASHBOARD ------------------
@@ -497,6 +554,39 @@ def staff_signup_api(request):
 @csrf_exempt
 @require_POST
 def staff_login_view(request):
+    """
+    Reference:
+    ```
+    class CustomTokenPairSerializer(TokenObtainPairSerializer):
+    username = serializers.CharField(required = True, write_only = True)
+    password = serializers.CharField(required = True, write_only = True)
+
+    def validate(self, attrs):
+        identifier = escape(attrs.get("username", ""))
+        password = escape(attrs.get("password", ""))
+
+        user = (
+            authenticate(username=identifier, password=password)
+            or
+            self._authenticate_by_email(identifier, password)
+        )
+
+        if user is None:
+            raise serializers.ValidationError("Invalid credentials.")
+
+        attrs['username'] = user.username
+        LOGGER.info(f'User: {user.username}, attrs: {attrs}')
+        return super().validate(attrs)
+
+    def _authenticate_by_email(self, email, password):
+        try:
+            user = User.objects.get(email=email)
+            return authenticate(username=user.username, password=password)
+        except User.DoesNotExist:
+            return None
+    ```
+    """
+
     try:
         data = json.loads(request.body.decode('utf-8'))
         identifier = data.get("identifier")  # Can be email or mobile
