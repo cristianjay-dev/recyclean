@@ -1,0 +1,70 @@
+# ----------------
+# Python / Django
+# ----------------
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.log
+
+# SQLite (if ever used locally)
+*.sqlite3
+db.sqlite3
+
+# ----------------
+# Virtual Environments
+# ----------------
+.venv/
+venv/
+ENV/
+
+# ----------------
+# Environment files (secrets)
+# ----------------
+.env
+.env.*
+!.env.example   # keep the safe template under version control
+.env.local      # explicitly ignore your API keys file
+
+# ----------------
+# Media / static (user uploads)
+# ----------------
+/media/
+/staticfiles/
+/static/
+
+# ----------------
+# Docker
+# ----------------
+volumes/
+*.pid
+*.seed
+*.pid.lock
+
+# ----------------
+# Node (if frontend exists in repo)
+# ----------------
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# ----------------
+# IDE / OS junk
+# ----------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ----------------
+# Project-specific
+# ----------------
+/runs/
+/outputs/
+/checkpoints/
+/datasets/
+/__pycache__/
