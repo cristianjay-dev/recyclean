@@ -1,325 +1,313 @@
-"""
-General Remarks:
-- endpoints should have a limited amount of request methods to use (POST, GET, DELETE)
-- use serializers: 
-    https://www.django-rest-framework.org/api-guide/serializers/ 
-    https://docs.djangoproject.com/en/5.2/topics/serialization/
-- use LOGGERS
-"""
+# views.py — Recyclean (auth, submissions, rewards, DIY CRUD + daily rotation + summary CSVs)
+from __future__ import annotations
 
-from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth.hashers import make_password, check_password
-from django.http import JsonResponse, HttpResponse
-from django.views.decorators.csrf import csrf_exempt
-from django.utils import timezone
-from django.conf import settings
-from django.contrib.auth.decorators import login_required
-from django.urls import reverse
-from django.views.decorators.http import require_http_methods
-from django.middleware.csrf import get_token
+import csv
+import io
+import json
+import logging
+import secrets
+from datetime import datetime, timedelta, date
+from functools import wraps
+from typing import List, Dict, Tuple
 
-from .forms import ManualQuizForm
-from .models import RewardRequest, Quiz, QuizAnswer, User, QuizSession, DropOffSite, Submission, StaffTransaction
-
-from django.views.decorators.http import require_POST, require_GET
-from django.db.models import Q, Sum, Exists, OuterRef
-
-import uuid, json, requests
 import cv2
 import numpy as np
-from rest_framework.parsers import MultiPartParser, JSONParser
-from rest_framework.decorators import api_view, parser_classes, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from django.conf import settings
+from django.contrib.auth import authenticate
+from django.contrib.auth.models import Group
+from django.db import transaction
+from django.db.models import Sum, Min, Max, Q
+from django.http import Http404, HttpResponse, JsonResponse
+from django.shortcuts import get_object_or_404, render
+from django.utils import timezone
+from django.utils.html import escape
+from django.utils.timezone import localtime
+from django.views import View
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
+from django.views.decorators.http import require_POST
+from rest_framework import permissions, serializers, views
+from rest_framework.decorators import api_view, permission_classes, parser_classes
+from rest_framework.parsers import JSONParser, MultiPartParser
 from rest_framework.response import Response
-from collections import Counter
 
-from datetime import timedelta
-from django.db.models.functions import Lower
+from .forms import DIYTutorialForm
+from .models import (
+    Barangay,
+    DropOffSite,
+    RewardRequest,
+    StaffApprovalRequest,
+    StaffTransaction,
+    Submission,
+    User,
+    UserPointsLedger,
+    DIYTutorial,
+    DIYDailyPool,
+    DIYDailySelection,
+    DIYSubmission,
+    PointsConfig,
+)
+
 from .services.reloadly import (
     get_reloadly_balance,
     list_reloadly_transactions,
     send_topup,
     auto_detect_operator,
-    ReloadlyError,   # ← add this
+    ReloadlyError,
 )
 
-
-# import by Jxst-Felix
-import logging
-
-# created by Jxst-Felix
 LOGGER = logging.getLogger(__name__)
 
-# when logging
-LOGGER.info("You message here")
 
-# when error occurs
-LOGGER.error("error message here")
+# ==============================================================================
+# Utilities
+# ==============================================================================
 
-# when something unexpected occurs but not an error
-LOGGER.warning("You message here")
-
-# Add this in settings.py
-"""
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'console': {
-            'format': '[%(asctime)s %(name)s] %(levelname)s [%(pathname)s:%(lineno)d] - %(message)s',
-        },
-    },
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'formatter': 'console'
-        },
-    },
-    'root': {
-        'handlers': ['console'],
-        'level': 'INFO',
-    },
-    'loggers': {
-        'django': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False
-        },
-    },
-}
-
-Reference:
-https://docs.djangoproject.com/en/5.2/topics/logging/
-"""
+def get_or_create_group(name: str) -> Group:
+    grp, _ = Group.objects.get_or_create(name=name)
+    return grp
 
 
-# ------------------ DASHBOARD ------------------
+def compute_points(bottle_data: List[Dict]) -> int:
+    """
+    Compute points for bottles using PointsConfig (small/large only).
+    bottle_data item shape: {"size": "small|large", "count": int}
+    """
+    cfg = PointsConfig.current()
+    size_points = {"small": cfg.small_bottle_points, "large": cfg.large_bottle_points}
+    total = 0
+    for item in bottle_data or []:
+        size = (item.get("size") or "").lower()
+        try:
+            count = int(item.get("count", 0))
+        except Exception:
+            count = 0
+        if size in size_points and count >= 0:
+            total += size_points[size] * count
+    return total
+
+
+def today_ph():
+    return timezone.localdate()  # TIME_ZONE="Asia/Manila"
+
+
+def ensure_unique_username(base_username: str) -> str:
+    base = (base_username or "").strip() or "user"
+    candidate = base
+    i = 1
+    while User.objects.filter(username__iexact=candidate).exists():
+        i += 1
+        candidate = f"{base}{i}"
+    return candidate
+
+
+def _render_bullets_or_paragraph(text: str) -> str:
+    """
+    Very light formatter for description:
+    - If any line starts with -, *, or • → render as a <ul><li>...</li></ul>
+    - Else wrap in <p>...</p>
+    Always HTML-escapes content.
+    """
+    text = (text or "").strip()
+    if not text:
+        return ""
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    if any(ln.lstrip().startswith(("-", "*", "•")) for ln in lines):
+        items = "".join(
+            f"<li>{escape(ln.lstrip().lstrip('-*•').strip())}</li>" for ln in lines
+        )
+        return f"<ul>{items}</ul>"
+    return f"<p>{escape(text)}</p>"
+
+
+# ---- Admin/staff guard with development + shared-key bypass ------------------
+
+def _admin_bypass_ok(request) -> bool:
+    """
+    Returns True if admin/staff checks should be bypassed:
+      - If settings has ADMIN_SHARED_KEY and it matches:
+          * Header:  X-Admin-Key
+          * or form/query param: admin_key
+      - Else if DEBUG is True (development convenience)
+      - Else if explicit toggle DIY_ADMIN_BYPASS is True
+    """
+    shared = getattr(settings, "ADMIN_SHARED_KEY", None)
+    if shared:
+        supplied = (
+            request.headers.get("X-Admin-Key")
+            or request.POST.get("admin_key")
+            or request.GET.get("admin_key")
+        )
+        if supplied and str(supplied) == str(shared):
+            return True
+    if getattr(settings, "DIY_ADMIN_BYPASS", None) is True:
+        return True
+    return bool(getattr(settings, "DEBUG", False))
+
+
+def require_staff_json(view_func):
+    """
+    JSON-friendly staff/auth check:
+    - Allows bypass in dev or with ADMIN_SHARED_KEY (see _admin_bypass_ok)
+    - 401 if not authenticated (and no bypass)
+    - 403 if authenticated but not staff-ish (and no bypass)
+    """
+    @wraps(view_func)
+    def _wrapped(request, *args, **kwargs):
+        if _admin_bypass_ok(request):
+            return view_func(request, *args, **kwargs)
+        u = request.user
+        if not u.is_authenticated:
+            return JsonResponse({"success": False, "error": "Authentication required."}, status=401)
+        is_staffish = u.is_superuser or u.is_staff or u.groups.filter(name="staff").exists()
+        if not is_staffish:
+            return JsonResponse({"success": False, "error": "Staff permission required."}, status=403)
+        return view_func(request, *args, **kwargs)
+    return _wrapped
+
+
+# ==============================================================================
+# Serializers
+# ==============================================================================
+
+class StaffSignupSerializer(serializers.Serializer):
+    username = serializers.CharField(required=False, allow_blank=True)
+    first_name = serializers.CharField()
+    last_name = serializers.CharField()
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+    mobile = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    barangay_id = serializers.IntegerField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        email = attrs["email"].lower()
+        if User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError("Email already in use.")
+        mobile = attrs.get("mobile")
+        if mobile and User.objects.filter(mobile_number=mobile).exists():
+            raise serializers.ValidationError("Mobile already in use.")
+        username = (attrs.get("username") or "").strip()
+        if username and User.objects.filter(username__iexact=username).exists():
+            raise serializers.ValidationError("Username already taken.")
+        return attrs
+
+
+class StaffLoginSerializer(serializers.Serializer):
+    identifier = serializers.CharField()  # username | email | mobile
+    password = serializers.CharField(write_only=True)
+
+
+class ResidentSignupSerializer(serializers.Serializer):
+    username = serializers.CharField(required=False, allow_blank=True)
+    first_name = serializers.CharField()
+    last_name = serializers.CharField()
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+    mobile = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    barangay_id = serializers.IntegerField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        email = attrs["email"].lower()
+        if User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError("Email already in use.")
+        mobile = attrs.get("mobile")
+        if mobile and User.objects.filter(mobile_number=mobile).exists():
+            raise serializers.ValidationError("Mobile already in use.")
+        username = (attrs.get("username") or "").strip()
+        if username and User.objects.filter(username__iexact=username).exists():
+            raise serializers.ValidationError("Username already taken.")
+        return attrs
+
+
+class ResidentLoginSerializer(serializers.Serializer):
+    identifier = serializers.CharField()  # username | email
+    password = serializers.CharField(write_only=True)
+
+
+class SubmissionIntakeSerializer(serializers.Serializer):
+    dropoff_site_id = serializers.IntegerField()
+    bottle_data = serializers.ListField(child=serializers.DictField(), allow_empty=False)
+
+    def validate_bottle_data(self, value):
+        for item in value:
+            size = (item.get("size") or "").lower()
+            if size not in {"small", "large"}:
+                raise serializers.ValidationError("Invalid size; use small/large.")
+            try:
+                count = int(item.get("count"))
+            except Exception:
+                raise serializers.ValidationError("count must be an integer.")
+            if count < 0:
+                raise serializers.ValidationError("count must be >= 0.")
+        return value
+
+
+class SubmissionClaimSerializer(serializers.Serializer):
+    qr_token = serializers.CharField()
+
+
+class DIYSubmitSerializer(serializers.Serializer):
+    tutorial_id = serializers.IntegerField()
+    image = serializers.ImageField()
+    caption = serializers.CharField(required=False, allow_blank=True)
+    is_public = serializers.BooleanField(required=False, default=True)
+
+
+# ==============================================================================
+# Dashboard & Reward Requests (server-rendered)
+# ==============================================================================
+
 def dashboard(request):
     reloadly_balance = None
-    reloadly_currency = "PHP"
+    reloadly_currency_code = "PHP"
+    reloadly_currency_symbol = "₱"
     reloadly_error = None
+    reloadly_updated_at = None
     try:
         bal = get_reloadly_balance()
-        reloadly_balance = bal.get("balance") or bal.get("availableBalance") or bal.get("amount")
-        reloadly_currency = bal.get("currencyCode") or bal.get("currency") or "PHP"
+        if isinstance(bal, dict):
+            reloadly_balance = bal.get("balance") or bal.get("availableBalance") or bal.get("amount") or None
+            reloadly_currency_code = bal.get("currencyCode") or bal.get("currency") or "PHP"
+        else:
+            reloadly_balance = bal
+        reloadly_updated_at = timezone.localtime(timezone.now()).strftime("%Y-%m-%d %H:%M:%S")
     except Exception as e:
         reloadly_error = f"Unable to fetch Reloadly balance: {e}"
+        LOGGER.warning(reloadly_error)
 
     context = {
-        'total_rewards': RewardRequest.objects.count(),
-        'reloadly_balance': reloadly_balance,
-        'reloadly_currency': reloadly_currency,
-        'reloadly_error': reloadly_error,
+        "total_users": User.objects.count(),
+        "total_submissions": Submission.objects.count(),
+        "total_rewards": RewardRequest.objects.count(),
+        "reloadly_balance": reloadly_balance,
+        "reloadly_currency": reloadly_currency_code,
+        "reloadly_currency_code": reloadly_currency_code,
+        "reloadly_currency_symbol": reloadly_currency_symbol,
+        "reloadly_error": reloadly_error,
+        "reloadly_updated_at": reloadly_updated_at,
     }
-    return render(request, 'dashboard.html', context)
-
-# ------------------ REWARD MANAGEMENT ------------------
-# ------------------ RELOADLY (Airtime Top-up) ------------------
-
-@api_view(['POST'])
-@csrf_exempt
-def redeem_reward_api(request):
-    """
-    Redeem points for PH mobile load using Reloadly (sandbox/live based on settings).
-    Creates a RewardRequest and performs a top-up.
-    """
-    try:
-        data = request.data
-        user_id = data.get('user_id')
-        phone_number = (data.get('phone_number') or "").strip()
-        amount_str = str(data.get('amount') or "")
-        # 'telco' not required anymore (Reloadly auto-detects operator)
-
-        if not all([user_id, phone_number, amount_str]):
-            return Response({'success': False, 'error': 'Missing required fields.'}, status=400)
-
-        user = get_object_or_404(User, pk=user_id)
-
-        # Parse amount (supports '₱50' or '50')
-        digits = ''.join(ch for ch in amount_str if ch.isdigit())
-        if not digits:
-            return Response({'success': False, 'error': 'Invalid amount format.'}, status=400)
-        amount_value = int(digits)  # pesos
-
-        # Points: 1.00 point per ₱1.00 (your current logic: *100)
-        points_cost = amount_value * 100
-        if user.total_points < points_cost:
-            return Response({
-                'success': False,
-                'error': f"You need {points_cost/100.0:.2f} points, but you only have {user.total_points/100.0:.2f}."
-            }, status=400)
-
-        # Create reward request (pending)
-        reward_request = RewardRequest.objects.create(
-            user=user,
-            mobile_number=phone_number,
-            telco="",  # optional now; operator is auto-detected by Reloadly
-            points_used=points_cost,
-            amount=amount_value,
-            status='pending',
-            date_requested=timezone.now()
-        )
-
-        # ---- Call Reloadly (auto-detect operator -> topup) ----
-        # This returns the transaction payload (sandbox/live).
-        try:
-            tx = send_topup(phone=phone_number, amount=float(amount_value))
-        except ReloadlyError as e:
-            reward_request.status = 'failed'
-            reward_request.response_note = f"Reloadly error: {e}"
-            reward_request.save(update_fields=['status', 'response_note'])
-            return Response({'success': False, 'error': str(e)}, status=400)
-
-        # Typical fields: transactionId, status (SUCCESSFUL|PROCESSING|PENDING|FAILED)
-        txn_id = tx.get('transactionId') or tx.get('id')
-        status = (tx.get('status') or '').upper()
-
-        reward_request.payrex_txn_id = txn_id  # reuse the same field to avoid DB changes
-        reward_request.response_note = f"Reloadly status: {status}"
-        reward_request.date_processed = timezone.now()
-
-        if status in ('SUCCESSFUL', 'SUCCESS', 'COMPLETED'):
-            # Top-up already completed -> approve + deduct points
-            user.total_points -= points_cost
-            user.save(update_fields=['total_points'])
-
-            reward_request.status = 'approved'
-            reward_request.save(update_fields=[
-                'status', 'payrex_txn_id', 'response_note', 'date_processed'
-            ])
-
-            return Response({
-                'success': True,
-                'message': 'Load sent successfully!',
-                'new_total_points': user.total_points
-            }, status=201)
-
-        elif status in ('PENDING', 'PROCESSING', 'REQUESTED'):
-            # Accepted and processing at operator -> mark processing + deduct points
-            user.total_points -= points_cost
-            user.save(update_fields=['total_points'])
-
-            reward_request.status = 'processing'
-            reward_request.save(update_fields=[
-                'status', 'payrex_txn_id', 'response_note', 'date_processed'
-            ])
-
-            return Response({
-                'success': True,
-                'message': 'Your load request is being processed.',
-                'new_total_points': user.total_points
-            }, status=201)
-
-        else:
-            # FAILED or unknown status
-            reward_request.status = 'failed'
-            reward_request.save(update_fields=[
-                'status', 'payrex_txn_id', 'response_note', 'date_processed'
-            ])
-            return Response({'success': False, 'error': f'Topup status: {status or "UNKNOWN"}'}, status=400)
-
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return Response({'success': False, 'error': 'A server error occurred.'}, status=500)
-
-
-@csrf_exempt
-def reloadly_webhook(request):
-    """
-    OPTIONAL: If you enable Reloadly webhooks, handle final status here.
-    Update RewardRequest by transactionId to approved/failed, refund points on failure.
-    (Implement signature verification if you enable signing in Reloadly.)
-    """
-    try:
-        payload = json.loads(request.body.decode('utf-8'))
-        txn_id = payload.get('transactionId') or payload.get('id')
-        status = (payload.get('status') or '').upper()
-
-        if not txn_id:
-            return HttpResponse(status=400)
-
-        rr = RewardRequest.objects.filter(payrex_txn_id=txn_id).first()
-        if not rr:
-            return HttpResponse(status=200)  # nothing to do
-
-        if status in ('SUCCESSFUL', 'SUCCESS', 'COMPLETED'):
-            if rr.status != 'approved':
-                rr.status = 'approved'
-                rr.response_note = 'Reloadly webhook: top-up completed.'
-                rr.save(update_fields=['status', 'response_note'])
-
-        elif status in ('FAILED', 'ERROR'):
-            if rr.status != 'failed':
-                rr.status = 'failed'
-                rr.response_note = 'Reloadly webhook: top-up failed.'
-                rr.save(update_fields=['status', 'response_note'])
-
-                # refund points if they were already deducted (processing path)
-                u = rr.user
-                u.total_points += rr.points_used
-                u.save(update_fields=['total_points'])
-
-        # ignore other statuses
-        return HttpResponse(status=200)
-
-    except Exception as e:
-        print("Reloadly webhook error:", e)
-        return HttpResponse(status=400)
-    
+    return render(request, "dashboard.html", context)
 
 
 def reward_requests_view(request):
-    # Avoid N+1 on user lookups
-    reward_requests = (
-        RewardRequest.objects.select_related('user')
-        .order_by('-id')
-    )
-
-    # Attach a canonical reference for the template (works even if some fields don't exist)
-    for r in reward_requests:
-        r.reloadly_ref = (
-            getattr(r, "reloadly_topup_id", None)
-            or getattr(r, "reloadly_txn_id", None)
-            or getattr(r, "reloadly_transaction_id", None)
-            or getattr(r, "reloadly_reference", None)
-            or getattr(r, "payrex_txn_id", None)  # fallback while migrating
-        )
-
-    # Reloadly wallet + transactions
+    reward_requests = RewardRequest.objects.select_related("user").order_by("-id")
     reloadly_balance = None
     reloadly_currency = "PHP"
     reloadly_error = None
     reloadly_txns = []
-
-    # Balance
     try:
         bal = get_reloadly_balance()
         if isinstance(bal, dict):
             reloadly_balance = bal.get("balance") or bal.get("availableBalance") or bal.get("amount")
             reloadly_currency = bal.get("currencyCode") or bal.get("currency") or "PHP"
         else:
-            # If the helper returns a plain number
             reloadly_balance = bal
     except Exception as e:
         reloadly_error = f"Unable to fetch Reloadly balance: {e}"
-
-    # Transactions (defensive against different shapes)
     try:
         tx = list_reloadly_transactions(page=1, size=20)
-        if isinstance(tx, dict):
-            reloadly_txns = (
-                tx.get("content")
-                or tx.get("data")
-                or tx.get("transactions")
-                or tx.get("items")
-                or []
-            )
-        elif isinstance(tx, list):
-            reloadly_txns = tx
-        else:
-            reloadly_txns = []
+        reloadly_txns = (tx.get("content") or tx.get("data") or tx.get("transactions") or tx.get("items") or []) if isinstance(tx, dict) else (tx or [])
     except Exception as e:
-        reloadly_error = (reloadly_error + " | " if reloadly_error else "") + f"Txns error: {e}"
+        reloadly_error = (reloadly_error + f" | Txns error: {e}") if reloadly_error else f"Txns error: {e}"
 
     context = {
         "reward_requests": reward_requests,
@@ -332,19 +320,876 @@ def reward_requests_view(request):
     return render(request, "reward_requests.html", context)
 
 
-# ------------------ IMAGE ANALYSIS ------------------
+# Public API to normalize PH numbers for clients
+@api_view(["GET"])
+@permission_classes([permissions.AllowAny])
+def normalize_phone_ph(request):
+    """
+    GET /api/utils/normalize-phone/?phone=09171234567
+    -> {"success": true, "phone": "09xxxxxxxxx"}
+    """
+    phone = request.GET.get("phone") or (getattr(request, "query_params", {}) or {}).get("phone")
+    if not phone:
+        return Response({"success": False, "error": "Missing phone."}, status=400)
+    try:
+        normalized = _normalize_phone_ph(phone)
+    except ReloadlyError as e:
+        return Response({"success": False, "error": str(e)}, status=400)
+    return Response({"success": True, "phone": normalized})
+
+
+def _normalize_phone_ph(phone: str) -> str:
+    """
+    Normalize PH mobile numbers to 11-digit local format starting with '0'.
+    Accepts '+63xxxxxxxxxx', '63xxxxxxxxxx', or '09xxxxxxxxx'.
+    """
+    digits = "".join(ch for ch in (phone or "") if ch.isdigit())
+    if digits.startswith("63"):
+        digits = "0" + digits[2:]
+    if len(digits) == 10 and digits.startswith("9"):
+        digits = "0" + digits
+    if len(digits) != 11 or not digits.startswith("0"):
+        raise ReloadlyError("Invalid PH mobile number format.")
+    return digits
+
+
+# ==============================================================================
+# DIY management (server page + APIs your template uses)
+# ==============================================================================
+
+@ensure_csrf_cookie
+def diy_dashboard(request):
+    form = DIYTutorialForm()
+    tutorials = DIYTutorial.objects.order_by("-created_at")
+    return render(request, "diy_dashboard.html", {"form": form, "tutorials": tutorials})
+
+
+@api_view(["GET"])
+@permission_classes([permissions.AllowAny])
+def api_diy_daily(request):
+    date_val = today_ph()
+
+    existing = DIYDailySelection.objects.filter(date=date_val).select_related("tutorial").first()
+    if existing:
+        t = existing.tutorial
+        return Response({
+            "date": str(date_val),
+            "tutorial": {
+                "id": t.id,
+                "title": t.title,
+                "description": t.description,
+                "description_html": _render_bullets_or_paragraph(t.description),
+                "video_url": t.video_url,
+                "thumbnail": t.thumbnail.url if t.thumbnail else None,
+                "points_on_submit": t.points_on_submit,
+            },
+        })
+
+    pool, created = DIYDailyPool.objects.get_or_create(date=date_val)
+    if created:
+        active = DIYTutorial.objects.filter(is_active=True)
+        pool.tutorials.set(active)
+
+    no_repeat_days = getattr(settings, "DIY_NO_REPEAT_DAYS", 5)
+    window_start = date_val - timedelta(days=max(no_repeat_days - 1, 0))
+    recent_ids = list(
+        DIYDailySelection.objects.filter(date__gte=window_start)
+        .values_list("tutorial_id", flat=True)
+        .distinct()
+    )
+
+    candidates = pool.tutorials.filter(is_active=True).exclude(id__in=recent_ids)
+    if not candidates.exists():
+        candidates = pool.tutorials.filter(is_active=True)
+
+    if not candidates.exists():
+        return Response(status=204)
+
+    strategy = getattr(settings, "DIY_DAILY_STRATEGY", "round_robin").lower()
+    if strategy == "round_robin":
+        salt = int(getattr(settings, "DIY_ROTATION_SALT", 0))
+        ids = list(candidates.order_by("id").values_list("id", flat=True))
+        tutorial = DIYTutorial.objects.get(id=ids[(date_val.toordinal() + salt) % len(ids)])
+    else:
+        tutorial = candidates.order_by("?").first()
+
+    DIYDailySelection.objects.update_or_create(
+        date=date_val,
+        defaults={"tutorial": tutorial, "pool": pool},
+    )
+
+    t = tutorial
+    return Response({
+        "date": str(date_val),
+        "tutorial": {
+            "id": t.id,
+            "title": t.title,
+            "description": t.description,
+            "description_html": _render_bullets_or_paragraph(t.description),
+            "video_url": t.video_url,
+            "thumbnail": t.thumbnail.url if t.thumbnail else None,
+            "points_on_submit": t.points_on_submit,
+        },
+    })
+
+
+# Back-compat alias
+@api_view(["GET"])
+@permission_classes([permissions.AllowAny])
+def diy_daily(request):
+    return api_diy_daily(request)
+
+
+@require_POST
+@require_staff_json
+def diy_feature_today(request):
+    try:
+        tutorial_id = int(request.POST.get("tutorial_id", "0"))
+        date_str = request.POST.get("date") or ""
+        if not tutorial_id or not date_str:
+            return JsonResponse({"success": False, "error": "Missing tutorial_id or date."}, status=400)
+
+        try:
+            picked_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return JsonResponse({"success": False, "error": "Invalid date format, use YYYY-MM-DD."}, status=400)
+
+        tutorial = get_object_or_404(DIYTutorial, pk=tutorial_id)
+        pool, _ = DIYDailyPool.objects.get_or_create(date=picked_date)
+        pool.tutorials.add(tutorial)
+
+        DIYDailySelection.objects.update_or_create(
+            date=picked_date,
+            defaults={"tutorial": tutorial, "pool": pool},
+        )
+        return JsonResponse({"success": True})
+    except Exception as e:
+        LOGGER.exception("Feature DIY error")
+        return JsonResponse({"success": False, "error": str(e)}, status=500)
+
+
+@require_POST
+@require_staff_json
+def diy_create_tutorial(request):
+    form = DIYTutorialForm(request.POST, request.FILES)
+    if form.is_valid():
+        t = form.save()
+        return JsonResponse({"success": True, "id": t.id})
+    return JsonResponse({"success": False, "errors": form.errors}, status=400)
+
+
+@require_POST
+@require_staff_json
+def diy_update_tutorial(request, tutorial_id: int):
+    t = get_object_or_404(DIYTutorial, pk=tutorial_id)
+    form = DIYTutorialForm(request.POST, request.FILES, instance=t)
+    if form.is_valid():
+        form.save()
+        return JsonResponse({"success": True})
+    return JsonResponse({"success": False, "errors": form.errors}, status=400)
+
+
+@require_POST
+@require_staff_json
+def diy_delete_tutorial(request, tutorial_id: int):
+    t = get_object_or_404(DIYTutorial, pk=tutorial_id)
+    if DIYDailySelection.objects.filter(tutorial=t).exists():
+        return JsonResponse(
+            {"success": False, "error": "This tutorial is featured on one or more dates. Change those selections first."},
+            status=400,
+        )
+    t.delete()
+    return JsonResponse({"success": True})
+
+
+# ---- DIY submission (mobile/user uploads proof) ----
+class DIYSubmitView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser]
+
+    def post(self, request):
+        ser = DIYSubmitSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        user: User = request.user
+        tutorial = get_object_or_404(DIYTutorial, pk=ser.validated_data["tutorial_id"])
+
+        existing = DIYSubmission.objects.filter(user=user, tutorial=tutorial).first()
+        if existing:
+            return Response(
+                {"success": True, "message": "Already submitted for this DIY.", "points_awarded": existing.points_awarded},
+                status=200,
+            )
+
+        with transaction.atomic():
+            sub = DIYSubmission.objects.create(
+                user=user,
+                tutorial=tutorial,
+                image=ser.validated_data["image"],
+                caption=ser.validated_data.get("caption") or "",
+                is_public=ser.validated_data.get("is_public", True),
+                approved=True,
+                points_awarded=tutorial.points_on_submit or 0,
+                awarded_at=timezone.now() if (tutorial.points_on_submit or 0) > 0 else None,
+            )
+
+            if sub.points_awarded > 0:
+                user.total_points += sub.points_awarded
+                user.save(update_fields=["total_points"])
+                UserPointsLedger.objects.create(
+                    user=user,
+                    submission=None,
+                    source="diy_submit",
+                    delta_points=sub.points_awarded,
+                    balance_after=user.total_points,
+                    notes=f"DIY: {tutorial.title}",
+                )
+
+        return Response({"success": True, "points_awarded": sub.points_awarded, "balance": user.total_points}, status=201)
+
+
+# ==============================================================================
+# Rewards API (Reloadly)
+# ==============================================================================
+
+class RedeemRewardView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        try:
+            user: User = request.user
+            raw_phone = (request.data.get("phone_number") or "").strip()
+            amount_str = str(request.data.get("amount") or "").strip()
+
+            if not raw_phone or not amount_str:
+                return Response({"success": False, "error": "Missing phone or amount."}, status=400)
+
+            digits = "".join(ch for ch in amount_str if ch.isdigit())
+            if not digits:
+                return Response({"success": False, "error": "Invalid amount format."}, status=400)
+            amount_value = int(digits)
+
+            # default 100 pts per PHP unless overridden
+            POINTS_PER_PHP = int(getattr(settings, "POINTS_PER_PHP", 100))
+            points_cost = amount_value * POINTS_PER_PHP
+
+            if user.total_points < points_cost:
+                return Response(
+                    {"success": False, "error": f"Insufficient points. Need {points_cost}, have {user.total_points}."},
+                    status=400,
+                )
+
+            try:
+                phone = _normalize_phone_ph(raw_phone)
+            except ReloadlyError as e:
+                return Response({"success": False, "error": str(e)}, status=400)
+
+            try:
+                op = auto_detect_operator(phone, country_code="PH")
+            except ReloadlyError as e:
+                return Response({"success": False, "error": f"Operator detect failed: {e}"}, status=400)
+
+            operator_id = op.get("operatorId")
+            fixed = op.get("fixedAmounts") or []
+            min_amt = op.get("minAmount")
+            max_amt = op.get("maxAmount")
+
+            if fixed:
+                allowed = {int(float(x)) for x in fixed}
+                if amount_value not in allowed:
+                    return Response(
+                        {"success": False, "error": f"Amount must be one of: {sorted(allowed)}"},
+                        status=400,
+                    )
+            else:
+                if min_amt is not None and max_amt is not None:
+                    if not (float(min_amt) <= amount_value <= float(max_amt)):
+                        return Response(
+                            {"success": False, "error": f"Amount must be between {min_amt} and {max_amt}"},
+                            status=400,
+                        )
+
+            rr = RewardRequest.objects.create(
+                user=user,
+                mobile_number=phone,
+                telco="other",
+                points_used=points_cost,
+                amount=amount_value,
+                status="requested",
+            )
+
+            try:
+                tx = send_topup(phone=phone, amount=float(amount_value), operator_id=operator_id)
+            except ReloadlyError as e:
+                rr.status = "rejected"
+                rr.date_processed = timezone.now()
+                rr.save(update_fields=["status", "date_processed"])
+                return Response({"success": False, "error": str(e)}, status=400)
+
+            status_up = (tx.get("status") or "").upper()
+
+            if status_up in {"SUCCESS", "SUCCESSFUL", "COMPLETED"}:
+                user.total_points -= points_cost
+                user.save(update_fields=["total_points"])
+                rr.status = "paid"
+                rr.date_processed = timezone.now()
+                rr.processed_by = request.user
+                rr.save(update_fields=["status", "date_processed", "processed_by"])
+                return Response(
+                    {"success": True, "message": "Load sent successfully!", "new_total_points": user.total_points},
+                    status=201,
+                )
+
+            elif status_up in {"PENDING", "PROCESSING", "REQUESTED"}:
+                return Response({"success": True, "message": "Top-up request accepted and processing."}, status=202)
+
+            else:
+                rr.status = "rejected"
+                rr.date_processed = timezone.now()
+                rr.processed_by = request.user
+                rr.save(update_fields=["status", "date_processed", "processed_by"])
+                return Response(
+                    {"success": False, "error": f"Top-up status: {status_up or 'UNKNOWN'}"},
+                    status=400,
+                )
+
+        except Exception:
+            LOGGER.exception("RedeemReward error")
+            return Response({"success": False, "error": "Server error."}, status=500)
+
+
 @csrf_exempt
-@api_view(['POST'])
+def reloadly_webhook(request):
+    expected = getattr(settings, "RELOADLY_WEBHOOK_SECRET", "")
+    provided = request.headers.get("X-Webhook-Secret") or request.GET.get("secret") or ""
+    if expected and str(provided) != str(expected):
+        return HttpResponse(status=403)
+
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+        txn_status = (payload.get("status") or "").upper()
+
+        phone_raw = payload.get("recipientPhone") or payload.get("recipientPhoneNumber")
+        amount = int(float(payload.get("requestedAmount") or payload.get("amount") or 0))
+        if not phone_raw or not amount:
+            return HttpResponse(status=200)
+
+        try:
+            phone = _normalize_phone_ph(phone_raw)
+        except Exception:
+            phone = phone_raw
+
+        rr = (
+            RewardRequest.objects.filter(mobile_number=phone, amount=amount, status="requested")
+            .order_by("-date_requested")
+            .first()
+        )
+        if not rr:
+            return HttpResponse(status=200)
+
+        if txn_status in {"SUCCESS", "SUCCESSFUL", "COMPLETED"}:
+            user = rr.user
+            if user.total_points >= rr.points_used:
+                user.total_points -= rr.points_used
+                user.save(update_fields=["total_points"])
+            rr.status = "paid"
+            rr.date_processed = timezone.now()
+            rr.save(update_fields=["status", "date_processed"])
+
+        elif txn_status in {"FAILED", "ERROR"}:
+            rr.status = "rejected"
+            rr.date_processed = timezone.now()
+            rr.save(update_fields=["status", "date_processed"])
+
+        return HttpResponse(status=200)
+    except Exception:
+        LOGGER.exception("Reloadly webhook error")
+        return HttpResponse(status=400)
+
+
+# ==============================================================================
+# Auth & Staff Approval
+# ==============================================================================
+
+class StaffSignupView(views.APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        ser = StaffSignupSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        barangay = None
+        if ser.validated_data.get("barangay_id"):
+            barangay = get_object_or_404(Barangay, pk=ser.validated_data["barangay_id"])
+
+        desired_username = (ser.validated_data.get("username") or "").strip() or ser.validated_data["email"].split("@")[0].lower()
+        username = ensure_unique_username(desired_username)
+
+        with transaction.atomic():
+            user = User.objects.create(
+                username=username,
+                first_name=ser.validated_data["first_name"],
+                last_name=ser.validated_data["last_name"],
+                email=ser.validated_data["email"].lower(),
+                mobile_number=ser.validated_data.get("mobile") or None,
+                barangay=barangay,
+                is_active=False,
+                is_approved=False,
+                account_status="active",
+            )
+            user.set_password(ser.validated_data["password"])
+            user.save()
+            StaffApprovalRequest.objects.create(user=user, requested_barangay=barangay, status="pending")
+
+        return Response({"success": True, "message": "Staff application submitted. Awaiting approval."}, status=201)
+
+
+class StaffLoginView(views.APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        ser = StaffLoginSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        identifier = ser.validated_data["identifier"]
+        password = ser.validated_data["password"]
+
+        user = (
+            User.objects.filter(username__iexact=identifier).first()
+            or User.objects.filter(email__iexact=identifier).first()
+            or User.objects.filter(mobile_number=identifier).first()
+        )
+        if not user:
+            return Response({"success": False, "error": "Account not found."}, status=404)
+
+        if not user.is_approved or not user.is_active:
+            return Response({"success": False, "error": "Account pending approval."}, status=403)
+
+        user_auth = authenticate(username=user.username, password=password)
+        if not user_auth:
+            return Response({"success": False, "error": "Incorrect password."}, status=400)
+
+        user.groups.add(get_or_create_group("staff"))
+
+        return Response({
+            "success": True,
+            "message": "Login successful.",
+            "user": {
+                "id": user.id,
+                "name": user.get_full_name(),
+                "email": user.email,
+                "username": user.username,
+                "mobile": user.mobile_number,
+                "barangay": user.barangay.name if user.barangay else None,
+            },
+        })
+
+
+class ApproveStaffView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, user_id: int):
+        staff = get_object_or_404(User, pk=user_id)
+        req = StaffApprovalRequest.objects.filter(user=staff, status="pending").first()
+
+        staff.is_approved = True
+        staff.is_active = True
+        staff.is_staff = True
+        staff.save(update_fields=["is_approved", "is_active", "is_staff"])
+
+        staff_group = get_or_create_group("staff")
+        staff.groups.add(staff_group)
+
+        if staff.barangay:
+            site, _ = DropOffSite.objects.get_or_create(barangay=staff.barangay)
+            # M2M attach
+            site.staff_members.add(staff)
+
+        if req:
+            req.status = "approved"
+            req.decided_by = request.user
+            req.decided_at = timezone.now()
+            req.save(update_fields=["status", "decided_by", "decided_at"])
+
+        return Response({"success": True})
+
+
+class RejectStaffView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, user_id: int):
+        staff = get_object_or_404(User, pk=user_id)
+        req = StaffApprovalRequest.objects.filter(user=staff, status="pending").first()
+        if req:
+            req.status = "rejected"
+            req.decided_by = request.user
+            req.decided_at = timezone.now()
+            req.save(update_fields=["status", "decided_by", "decided_at"])
+        staff.delete()
+        return Response({"success": True})
+
+
+class ResidentSignupView(views.APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        ser = ResidentSignupSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        barangay = None
+        if ser.validated_data.get("barangay_id"):
+            barangay = get_object_or_404(Barangay, pk=ser.validated_data["barangay_id"])
+
+        desired_username = (ser.validated_data.get("username") or "").strip() or ser.validated_data["email"].split("@")[0].lower()
+        username = ensure_unique_username(desired_username)
+
+        with transaction.atomic():
+            user = User.objects.create(
+                username=username,
+                first_name=ser.validated_data["first_name"],
+                last_name=ser.validated_data["last_name"],
+                email=ser.validated_data["email"].lower(),
+                mobile_number=ser.validated_data.get("mobile") or None,
+                barangay=barangay,
+                is_active=True,
+                is_approved=True,
+                account_status="active",
+            )
+            user.set_password(ser.validated_data["password"])
+            user.save()
+            user.groups.add(get_or_create_group("resident"))
+
+        return Response({"success": True, "message": "Account created."}, status=201)
+
+
+class ResidentLoginView(views.APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        ser = ResidentLoginSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        identifier = ser.validated_data["identifier"]
+        password = ser.validated_data["password"]
+
+        user = (
+            User.objects.filter(username__iexact=identifier).first()
+            or User.objects.filter(email__iexact=identifier).first()
+        )
+        if not user:
+            return Response({"success": False, "error": "Account not found."}, status=404)
+
+        user_auth = authenticate(username=user.username, password=password)
+        if not user_auth:
+            return Response({"success": False, "error": "Incorrect password."}, status=400)
+
+        user.groups.add(get_or_create_group("resident"))
+
+        return Response({
+            "success": True,
+            "message": "Login successful.",
+            "user": {
+                "id": user.id,
+                "name": user.get_full_name(),
+                "email": user.email,
+                "username": user.username,
+                "points": user.total_points,
+            },
+        })
+
+
+# ==============================================================================
+# Submissions: intake → QR → claim
+# ==============================================================================
+
+class SubmissionIntakeView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [JSONParser]
+
+    def post(self, request):
+        ser = SubmissionIntakeSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        staff = request.user
+        dropoff_site = get_object_or_404(DropOffSite, pk=ser.validated_data["dropoff_site_id"])
+        bottle_data = ser.validated_data["bottle_data"]
+
+        proposed_points = compute_points(bottle_data)
+        qr_token = secrets.token_urlsafe(24)
+        expires = timezone.now() + timedelta(minutes=10)
+
+        with transaction.atomic():
+            sub = Submission.objects.create(
+                staff=staff,
+                dropoff_site=dropoff_site,
+                bottle_data=bottle_data,
+                proposed_points=proposed_points,
+                qr_token=qr_token,
+                qr_expires_at=expires,
+                status="pending",
+                source="manual",
+            )
+            StaffTransaction.objects.create(staff=staff, submission=sub, action="submission_created")
+
+        return Response(
+            {
+                "submission_id": sub.id,
+                "proposed_points": proposed_points,
+                "qr_token": qr_token,
+                "qr_expires_at": expires.isoformat(),
+            },
+            status=201,
+        )
+
+
+class SubmissionQRView(View):
+    """GET /api/submissions/<id>/qr.png → QR PNG of the submission's qr_token"""
+    def get(self, request, submission_id: int):
+        try:
+            sub = Submission.objects.only("qr_token").get(pk=submission_id)
+        except Submission.DoesNotExist:
+            raise Http404
+
+        try:
+            import qrcode  # lazy import
+        except ImportError:
+            return HttpResponse("QR code generator not installed.", status=500)
+
+        img = qrcode.make(sub.qr_token)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        return HttpResponse(buf.read(), content_type="image/png")
+
+
+class SubmissionClaimView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [JSONParser]
+
+    def post(self, request):
+        ser = SubmissionClaimSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        token = ser.validated_data["qr_token"]
+
+        with transaction.atomic():
+            sub = Submission.objects.select_for_update().filter(qr_token=token).first()
+            if not sub:
+                return Response({"success": False, "error": "Invalid QR."}, status=404)
+
+            if sub.status != "pending":
+                return Response({"success": False, "error": "QR already used or invalid state."}, status=400)
+
+            if sub.qr_expires_at and sub.qr_expires_at < timezone.now():
+                sub.status = "expired"
+                sub.save(update_fields=["status"])
+                return Response({"success": False, "error": "QR expired."}, status=400)
+
+            sub.claimed_by = request.user
+            sub.claimed_at = timezone.now()
+            sub.claimed_points = sub.proposed_points
+            sub.status = "claimed"
+            sub.save(update_fields=["claimed_by", "claimed_at", "claimed_points", "status", "updated_at"])
+
+            user = request.user
+            user.total_points += sub.claimed_points
+            user.save(update_fields=["total_points"])
+
+            UserPointsLedger.objects.create(
+                user=user,
+                submission=sub,
+                source="submission_claim",
+                delta_points=sub.claimed_points,
+                balance_after=user.total_points,
+                notes="Claim via QR",
+            )
+
+        return Response({"success": True, "claimed_points": sub.claimed_points, "balance": user.total_points})
+
+
+# ==============================================================================
+# Staff & Site metrics / pages
+# ==============================================================================
+
+def dropoff_sites_view(request):
+    # M2M: prefetch staff_members
+    sites = DropOffSite.objects.select_related("barangay").prefetch_related("staff_members")
+    return render(request, "dropoff_sites.html", {"sites": sites})
+
+
+def staff_management_view(request):
+    pending_staff = User.objects.filter(is_approved=False).order_by("date_joined")
+    active_staff = User.objects.filter(is_approved=True).order_by("date_joined")
+    return render(request, "staff_management.html", {"pending_staff": pending_staff, "active_staff": active_staff})
+
+
+def submissions_by_dropoff_site(request, site_id: int):
+    site = get_object_or_404(DropOffSite, id=site_id)
+    submissions = Submission.objects.filter(dropoff_site=site).select_related("staff", "claimed_by").order_by("-created_at")
+    return render(request, "submissions_by_site.html", {"site": site, "submissions": submissions})
+
+
+@api_view(["GET"])
+def staff_transaction_history(request, staff_id: int):
+    txs = StaffTransaction.objects.filter(staff_id=staff_id).select_related("submission").order_by("-created_at")
+    data = [
+        {
+            "action": t.action,
+            "notes": t.notes,
+            "points": getattr(t.submission, "claimed_points", 0),
+            "date": timezone.localtime(t.created_at).strftime("%Y-%m-%d %H:%M"),
+        }
+        for t in txs
+    ]
+    return Response({"success": True, "transactions": data})
+
+
+def _period_bounds(param: str) -> Tuple[date, date, str, List[str]]:
+    """
+    Returns (start_date, end_date_exclusive, period_key, label_list) for site detail chart.
+    """
+    today = today_ph()
+    if param == "year":
+        # last 12 months (inclusive of current month)
+        labels = []
+        months = []
+        y, m = today.year, today.month
+        for i in range(11, -1, -1):
+            yy = y if m - i > 0 else y - 1
+            mm = ((m - i - 1) % 12) + 1
+            months.append((yy, mm))
+            labels.append(f"{yy}-{mm:02d}")
+        start = date(months[0][0], months[0][1], 1)
+        # exclusive end: first day of next month after last
+        last_y, last_m = months[-1]
+        if last_m == 12:
+            end = date(last_y + 1, 1, 1)
+        else:
+            end = date(last_y, last_m + 1, 1)
+        return start, end, "year", labels
+
+    if param == "month":
+        # last 30 days
+        start = today - timedelta(days=29)
+        end = today + timedelta(days=1)
+        labels = [(start + timedelta(days=i)).strftime("%b %d") for i in range(30)]
+        return start, end, "month", labels
+
+    # default week
+    start = today - timedelta(days=6)
+    end = today + timedelta(days=1)
+    labels = [(start + timedelta(days=i)).strftime("%b %d") for i in range(7)]
+    return start, end, "week", labels
+
+
+def dropoff_site_detail(request, site_id: int):
+    site = get_object_or_404(DropOffSite, id=site_id)
+    site_staff = list(site.staff_members.all())
+
+    # Period filter for charts
+    period = (request.GET.get("period") or "week").lower()
+    start_d, end_d, period_key, labels = _period_bounds(period)
+
+    submissions_qs = Submission.objects.filter(
+        dropoff_site=site,
+        created_at__date__gte=start_d,
+        created_at__date__lt=end_d
+    ).select_related("staff", "claimed_by").order_by("-created_at")
+
+    # Totals (over selected period)
+    total_submissions = submissions_qs.count()
+    total_points = submissions_qs.aggregate(total=Sum("claimed_points"))["total"] or 0
+
+    # Bottle distribution
+    from collections import Counter
+    counter = Counter()
+    total_bottles = 0
+    for sub in submissions_qs.only("bottle_data"):
+        for b in sub.bottle_data or []:
+            size = (b.get("size") or "unknown").lower()
+            try:
+                cnt = int(b.get("count") or b.get("quantity") or 0)
+            except Exception:
+                cnt = 0
+            counter[size] += cnt
+            total_bottles += cnt
+
+    bottle_labels = list(counter.keys())
+    bottle_values = list(counter.values())
+
+    # Time-series counts for chart
+    series_labels = labels
+    series_values = []
+    if period_key == "year":
+        # build a dict for YYYY-MM → count
+        from calendar import monthrange
+        counts_by_month = {}
+        for y_m in labels:
+            counts_by_month[y_m] = 0
+        for dct in submissions_qs.values("created_at"):
+            dt = localtime(dct["created_at"]).date()
+            key = f"{dt.year}-{dt.month:02d}"
+            if key in counts_by_month:
+                counts_by_month[key] += 1
+        series_values = [counts_by_month[k] for k in labels]
+    else:
+        # daily
+        from collections import Counter as C2
+        c = C2([localtime(s.created_at).date().strftime("%b %d") for s in submissions_qs.only("created_at")])
+        series_values = [c.get(lbl, 0) for lbl in labels]
+
+    submissions = submissions_qs  # for table
+
+    return render(
+        request,
+        "dropoff_site_detail.html",
+        {
+            "site": site,
+            "staff_members": site_staff,
+            "period": period_key,
+            "submissions": submissions,
+            "total_submissions": total_submissions,
+            "total_points": total_points,
+            "total_bottles": total_bottles,
+            "series_labels": json.dumps(series_labels),
+            "series_values": json.dumps(series_values),
+            "bottle_labels": json.dumps(bottle_labels),
+            "bottle_values": json.dumps(bottle_values),
+        },
+    )
+
+
+@api_view(["GET"])
+def get_user_details(request, user_id: int):
+    user = User.objects.filter(pk=user_id).first()
+    if not user:
+        return Response({"success": False, "error": "User not found."}, status=404)
+
+    total_points = user.total_points or 0
+    WEEKLY_TARGET = 50  # bottles
+    sow = today_ph() - timedelta(days=today_ph().weekday())
+    weekly = Submission.objects.filter(claimed_by=user, created_at__date__gte=sow)
+    bottles_this_week = 0
+    for sub in weekly.only("bottle_data"):
+        for b in sub.bottle_data or []:
+            bottles_this_week += int(b.get("count") or 0)
+
+    quota_progress = min(bottles_this_week / WEEKLY_TARGET, 1.0) if WEEKLY_TARGET > 0 else 0.0
+    return Response({"success": True, "id": user.id, "name": user.get_full_name(), "points": total_points, "quota_progress": quota_progress})
+
+
+# ==============================================================================
+# Image analysis (prototype)
+# ==============================================================================
+
+@csrf_exempt
+@api_view(["POST"])
 @parser_classes([MultiPartParser])
 def analyze_image(request):
-    image_file = request.FILES.get('image')
+    image_file = request.FILES.get("image")
     if not image_file:
-        return JsonResponse({'error': 'No image provided'}, status=400)
+        return JsonResponse({"error": "No image provided"}, status=400)
 
     file_bytes = np.asarray(bytearray(image_file.read()), dtype=np.uint8)
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
     if img is None:
-        return JsonResponse({'error': 'Failed to decode image'}, status=400)
+        return JsonResponse({"error": "Failed to decode image"}, status=400)
 
     img = cv2.resize(img, (640, 480))
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -352,865 +1197,199 @@ def analyze_image(request):
     edges = cv2.Canny(blurred, 50, 150)
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    bottle_counts = {'250ml': 0, '500ml': 0, '1L': 0, '1.5L+': 0}
+    bottle_counts = {"small": 0, "large": 0}
     for contour in contours:
-        x, y, w, h = cv2.boundingRect(contour)
+        _, _, w, h = cv2.boundingRect(contour)
         if h < 100 or w < 30:
             continue
-        if h <= 150:
-            bottle_counts['250ml'] += 1
-        elif h <= 200:
-            bottle_counts['500ml'] += 1
-        elif h <= 260:
-            bottle_counts['1L'] += 1
+        if h <= 200:
+            bottle_counts["small"] += 1
         else:
-            bottle_counts['1.5L+'] += 1
+            bottle_counts["large"] += 1
 
     total_detected = sum(bottle_counts.values())
     confidence = round(min(1.0, total_detected / 5.0), 2)
     suggested_size = max(bottle_counts, key=bottle_counts.get) if total_detected > 0 else "unknown"
 
-    return JsonResponse({
-        'total_detected': total_detected,
-        'confidence_score': confidence,
-        'suggested_size': suggested_size,
-        'bottle_sizes': bottle_counts
-    })
-
-# ------------------ QUIZ MANAGEMENT ------------------
-def quiz_dashboard(request):
-    """
-    A simplified dashboard for the admin to manage one single pool of questions.
-    It no longer deals with categories.
-    """
-    # Fetch all questions from the single pool, ordered by newest first.
-    all_questions = Quiz.objects.all().order_by('-id')
-    
-    # We only need the form for adding/editing questions.
-    form = ManualQuizForm()
-
-    context = {
-        'questions': all_questions,
-        'form': form,
-    }
-    return render(request, 'quiz_dashboard.html', context)
-
-@csrf_exempt
-@require_POST
-def update_question(request, quiz_id):
-    """
-    Updates an existing quiz question. This view's logic remains mostly the same,
-    but it's now simpler as it doesn't need to handle categories.
-    """
-    quiz = get_object_or_404(Quiz, id=quiz_id)
-    form = ManualQuizForm(request.POST, instance=quiz)
-
-    if form.is_valid():
-        form.save()
-        return JsonResponse({'success': True})
-    else:
-        return JsonResponse({'success': False, 'errors': form.errors}, status=400)
-
-@csrf_exempt
-@require_POST
-def delete_question(request, question_id):
-    """
-    Deletes a question from the pool. This view is unchanged.
-    """
-    try:
-        Quiz.objects.filter(id=question_id).delete()
-        return JsonResponse({'success': True})
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
-@csrf_exempt
-@require_POST
-def create_quiz(request):
-    """
-    Creates a new quiz question (of any type) and adds it to the pool.
-    This view now handles all question creation.
-    """
-    form = ManualQuizForm(request.POST)
-    if form.is_valid():
-        form.save() # The form is now simple and can be saved directly.
-        return JsonResponse({'success': True})
-    
-    return JsonResponse({'success': False, 'errors': form.errors}, status=400)
-
-
-# ------------------ STAFF MANAGEMENT & APPROVAL ------------------
-def dropoff_sites_view(request):
-    sites = DropOffSite.objects.select_related('assigned_staff')
-    return render(request, 'dropoff_sites.html', {'sites': sites})
-
-def staff_requests_view(request):
-    pending_staff = User.objects.filter(user_type='staff', is_approved=False)
-    return render(request, 'staff_requests.html', {'pending_staff': pending_staff})
-
-@csrf_exempt
-@require_POST
-def approve_staff(request, user_id):
-    staff = get_object_or_404(User, pk=user_id)
-
-    if staff.user_type != 'staff':
-        return JsonResponse({'success': False, 'error': 'User is not staff'})
-
-    # ✅ Approve staff
-    staff.is_approved = True
-    staff.account_status = 'active'
-    staff.save()
-
-    # ✅ Assign to drop-off site
-    site, created = DropOffSite.objects.get_or_create(barangay=staff.barangay)
-    site.assigned_staff = staff
-    site.save()
-
-    # ✅ Prepared SMS (optional)
-    send_sms_semaphore(
-        staff.mobile_number,
-        f"Hi {staff.name}, your RecyClean staff account has been approved. "
-        f"You can now manage the drop-off site in {staff.barangay}."
-    )
-
-    # ✅ Return JSON with staff details for frontend insertion
-    return JsonResponse({
-        'success': True,
-        'staff': {
-            'id': staff.id,
-            'name': staff.name,
-            'barangay': staff.barangay,
-            'mobile': staff.mobile_number
-        }
-    })
-
-
-def send_sms_semaphore(mobile_number, message):
-    """
-    Prepares to send SMS via Semaphore. This won't send anything until SEMAPHORE_API_KEY is set.
-    """
-    try:
-        import requests
-
-        if not settings.SEMAPHORE_API_KEY:
-            print("🔕 SMS not sent: No API key provided.")
-            return False
-
-        url = "https://api.semaphore.co/api/v4/messages"
-        payload = {
-            "apikey": settings.SEMAPHORE_API_KEY,
-            "number": mobile_number,
-            "message": message,
-            "sendername": "RecyClean"
-        }
-
-        response = requests.post(url, data=payload)
-        if response.status_code == 200:
-            print("✅ SMS sent successfully.")
-        else:
-            print("❌ SMS sending failed:", response.text)
-
-        return response.status_code == 200
-    except Exception as e:
-        print("📵 SMS error (will not crash system):", e)
-        return False
-    
-
-@csrf_exempt
-def staff_signup_api(request):
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body.decode('utf-8'))
-
-            name = f"{data['first_name']} {data['last_name']}"
-            email = data['email']
-            mobile = data['phone']
-            password = data['password']  # Raw password from request
-            barangay = data['barangay']
-
-            # ✅ Check duplicate mobile number
-            if User.objects.filter(mobile_number=mobile, user_type='staff').exists():
-                return JsonResponse({'success': False, 'error': 'Mobile number already exists'}, status=400)
-
-            # ✅ Create staff with hashed password
-            User.objects.create(
-                name=name,
-                email=email,
-                mobile_number=mobile,
-                password_hash=make_password(password),  # Hash before saving
-                user_type='staff',
-                barangay=barangay,
-                is_approved=False,  # Must be approved by admin
-                date_joined=timezone.now(),
-                account_status='pending',
-                registered_by_admin=False
-            )
-
-            return JsonResponse({'success': True, 'message': 'Application submitted'})
-        except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)}, status=500)
-        
-        
-
-@csrf_exempt
-@require_POST
-def staff_login_view(request):
-    """
-    Reference:
-    ```
-    class CustomTokenPairSerializer(TokenObtainPairSerializer):
-    username = serializers.CharField(required = True, write_only = True)
-    password = serializers.CharField(required = True, write_only = True)
-
-    def validate(self, attrs):
-        identifier = escape(attrs.get("username", ""))
-        password = escape(attrs.get("password", ""))
-
-        user = (
-            authenticate(username=identifier, password=password)
-            or
-            self._authenticate_by_email(identifier, password)
-        )
-
-        if user is None:
-            raise serializers.ValidationError("Invalid credentials.")
-
-        attrs['username'] = user.username
-        LOGGER.info(f'User: {user.username}, attrs: {attrs}')
-        return super().validate(attrs)
-
-    def _authenticate_by_email(self, email, password):
-        try:
-            user = User.objects.get(email=email)
-            return authenticate(username=user.username, password=password)
-        except User.DoesNotExist:
-            return None
-    ```
-    """
-
-    try:
-        data = json.loads(request.body.decode('utf-8'))
-        identifier = data.get("identifier")  # Can be email or mobile
-        password = data.get("password")
-
-        if not identifier or not password:
-            return JsonResponse({"success": False, "error": "Missing credentials."})
-
-        # Find staff by email or phone
-        user = User.objects.filter(user_type='staff').filter(
-            Q(email=identifier) | Q(mobile_number=identifier)
-        ).first()
-
-        if not user:
-            return JsonResponse({"success": False, "error": "Staff account not found or incorrect credentials."})
-
-        # 🚫 If not approved
-        if not user.is_approved:
-            return JsonResponse({
-                "success": False,
-                "error": "Your account is still pending approval. Please wait for the admin to approve it."
-            })
-
-        # ✅ Verify hashed password
-        if not check_password(password, user.password_hash):
-            return JsonResponse({"success": False, "error": "Incorrect password."})
-
-        # ✅ Success
-        return JsonResponse({
-            "success": True,
-            "message": "Login successful.",
-            "is_approved": user.is_approved,
-            "user": {
-                "id": user.id,
-                "name": user.name,
-                "email": user.email,
-                "mobile": user.mobile_number,
-                "barangay": user.barangay,
-            }
-        })
-
-    except Exception as e:
-        return JsonResponse({"success": False, "error": str(e)})
-
-@csrf_exempt
-@require_POST
-def reject_staff(request, user_id):
-    staff = get_object_or_404(User, pk=user_id)
-
-    if staff.user_type != 'staff':
-        return JsonResponse({'success': False, 'error': 'User is not staff'})
-
-    name = staff.name
-    mobile = staff.mobile_number
-
-    # Send SMS before deletion
-    send_sms_semaphore(
-        mobile,
-        f"Hi {name}, unfortunately your RecyClean staff application has been rejected. Thank you for your interest."
-    )
-
-    staff.delete()
-
-    return JsonResponse({'success': True})
-
-
-# ------------------ DROP-OFF SITE DETAIL ------------------  # 🔁 Add this at the top if not already imported
-
-@api_view(['POST'])
-@csrf_exempt
-def process_qr_submission(request):
-    data = request.data
-    print("📥 Incoming submission data:", data)
-
-    qr_id = data.get('qr_id')
-    if not qr_id:
-        return Response({'success': False, 'error': 'Missing QR ID'}, status=400)
-
-    try:
-        # 🚫 Prevent reuse
-        if Submission.objects.filter(qr_id=qr_id).exists():
-            return Response({'success': False, 'error': 'QR code already used'}, status=400)
-
-        # ✅ Optional staff
-        staff = None
-        if data.get('staff_id'):
-            staff = User.objects.filter(id=data['staff_id'], user_type='staff').first()
-            if not staff:
-                return Response({'success': False, 'error': f"Staff with id {data['staff_id']} not found"}, status=404)
-
-        # 🧠 Normalize barangay and match drop-off site
-        dropoff_name = data.get('dropoff_site', '').strip()
-        dropoff_site = DropOffSite.objects.annotate(
-            normalized_name=Lower('barangay')
-        ).filter(normalized_name=dropoff_name.lower()).first()
-
-        if not dropoff_site:
-            return Response({'success': False, 'error': f"Drop-off site '{dropoff_name}' not found"}, status=404)
-
-        # ✅ Optional user
-        user = None
-        if data.get('user_id'):
-            user = User.objects.filter(id=data['user_id'], user_type='resident').first()
-            if not user:
-                return Response({'success': False, 'error': f"Resident with id {data['user_id']} not found"}, status=404)
-
-        bottles = data.get('bottles', [])
-        total_points = data.get('total_points', 0)
-
-        # ✅ Save submission
-        submission = Submission.objects.create(
-            qr_id=qr_id,
-            user=user,
-            staff=staff,
-            dropoff_site=dropoff_site,
-            bottle_data=bottles,
-            total_points=total_points,
-            source='manual'
-        )
-
-        # ✅ Staff transaction (user might be None)
-        if staff:
-            StaffTransaction.objects.create(
-                staff=staff,
-                submission=submission,
-                action='manual_submission',
-                notes=f"Manual submission for {user.name}" if user else "Manual submission (no user linked)"
-            )
-
-        # ✅ Handle weekly bonus logic
-        bonus_awarded = False
-        quota_progress = 0.0
-
-        if user:
-            user.total_points += total_points
-
-            WEEKLY_TARGET = 50
-            BONUS_POINTS = 5
-            today = timezone.now().date()
-            start_of_week = today - timedelta(days=today.weekday())
-
-            weekly_subs = Submission.objects.filter(
-                user=user,
-                created_at__date__gte=start_of_week
-            )
-
-            bottles_this_week = 0
-            for sub in weekly_subs:
-                if isinstance(sub.bottle_data, list):
-                    for bottle in sub.bottle_data:
-                        bottles_this_week += bottle.get('quantity', 0)
-
-            for bottle in bottles:
-                bottles_this_week += bottle.get('quantity', 0)
-
-            quota_progress = min(bottles_this_week / WEEKLY_TARGET, 1.0)
-
-            if quota_progress >= 1.0 and (not user.weekly_bonus_given or user.weekly_bonus_given != today):
-                user.total_points += BONUS_POINTS
-                user.weekly_bonus_given = today
-                bonus_awarded = True
-
-            user.save()
-
-        return Response({
-            "success": True,
-            "message": "Submission saved.",
-            "new_points": user.total_points if user else 0,
-            "quota_progress": quota_progress,
-            "bonus": bonus_awarded
-        }, status=201)
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return Response({'success': False, 'error': str(e)}, status=400)
-    
-@csrf_exempt
-@require_POST
-def delete_dropoff_site(request, site_id):
-    try:
-        site = get_object_or_404(DropOffSite, pk=site_id)
-        site.delete()
-        return JsonResponse({'success': True})
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)})
-    
-
-# ------------------ STAFF TRANSACTION HISTORY ------------------
-
-def submissions_by_dropoff_site(request, site_id):
-    site = get_object_or_404(DropOffSite, id=site_id)
-    submissions = Submission.objects.filter(dropoff_site=site).select_related('staff', 'user').order_by('-created_at')
-    return render(request, 'submissions_by_site.html', {
-        'site': site,
-        'submissions': submissions
-    })
-
-@csrf_exempt
-def staff_metrics(request, staff_id):
-    try:
-        staff = User.objects.get(pk=staff_id, user_type='staff')
-
-        today = timezone.now().date()
-        past_week = [today - timedelta(days=i) for i in range(6, -1, -1)]
-
-        daily_data = []
-        for day in past_week:
-            count = Submission.objects.filter(
-                dropoff_site=staff.dropoff_site,
-                created_at__date=day
-            ).count()
-            daily_data.append({"day": day.strftime("%a"), "count": count})
-
-        monthly_start = today.replace(day=1)
-        monthly_submissions = Submission.objects.filter(
-            dropoff_site=staff.dropoff_site,
-            created_at__date__gte=monthly_start
-        )
-
-        monthly_bottle_count = 0
-        for s in monthly_submissions:
-            for b in s.bottle_data:
-                monthly_bottle_count += b.get('quantity', 0)
-
-        return JsonResponse({
-            "success": True,
-            "staff": {
-                "id": staff.id,
-                "name": staff.name,
-                "barangay": staff.barangay
-            },
-            "daily_breakdown": [
-                {"day": d["day"], "count": d["count"]} for d in daily_data
-            ],
-            "weekly_submissions": sum(d["count"] for d in daily_data),
-            "monthly_plastic_kg": monthly_bottle_count
-        })
-    except User.DoesNotExist:
-        return JsonResponse({"success": False, "error": "Staff not found"}, status=404)
-    
-    
-@api_view(['GET'])
-def staff_transaction_history(request, staff_id):
-    transactions = StaffTransaction.objects.filter(staff_id=staff_id).order_by('-created_at')
-    data = []
-    for t in transactions:
-        data.append({
-            "action": t.action,
-            "notes": t.notes,
-            "points": t.submission.total_points,
-            "date": t.created_at.strftime("%Y-%m-%d %H:%M"),
-        })
-    return Response({"success": True, "transactions": data})
- 
- 
-# Data Visualization for Drop-off Site Detail
-def dropoff_site_detail(request, site_id):
-    site = get_object_or_404(DropOffSite, id=site_id)
-    submissions = Submission.objects.filter(
-        dropoff_site=site
-    ).select_related('staff', 'user').order_by('-created_at')
-
-    # 📊 Metrics
-    total_submissions = submissions.count()
-    total_points = submissions.aggregate(total=Sum('total_points'))['total'] or 0
-    total_bottles = sum(
-        sum(bottle.get('quantity', 0) for bottle in sub.bottle_data)
-        for sub in submissions
-    )
-
-    # 📈 Daily submissions for last 7 days
-    today = timezone.now().date()
-    last_7_days = [today - timedelta(days=i) for i in range(6, -1, -1)]
-    daily_counts = []
-    for day in last_7_days:
-        count = submissions.filter(created_at__date=day).count()
-        daily_counts.append({
-            'date': day.strftime("%b %d"),
-            'count': count
-        })
-
-    # 🥤 Bottle size distribution
-    bottle_counter = Counter()
-    for sub in submissions:
-        for bottle in sub.bottle_data:
-            size = bottle.get('size', 'Unknown')
-            qty = bottle.get('quantity', 0)
-            bottle_counter[size] += qty
-
-    bottle_labels = list(bottle_counter.keys())
-    bottle_values = list(bottle_counter.values())
-
-    return render(request, 'dropoff_site_detail.html', {
-        'site': site,
-        'submissions': submissions,
-        'total_submissions': total_submissions,
-        'total_points': total_points,
-        'total_bottles': total_bottles,
-        # Chart.js Data
-        'daily_labels': json.dumps([d['date'] for d in daily_counts]),
-        'daily_values': json.dumps([d['count'] for d in daily_counts]),
-        'bottle_labels': json.dumps(bottle_labels),
-        'bottle_values': json.dumps(bottle_values),
-    })
-
-def staff_management_view(request):
-    pending_staff = User.objects.filter(user_type='staff', is_approved=False)
-    active_staff = User.objects.filter(user_type='staff', is_approved=True)
-
-    return render(request, 'staff_management.html', {
-        'pending_staff': pending_staff,
-        'active_staff': active_staff
-    })
-
-
-@api_view(['GET'])
-def get_staff_transactions(request, staff_id):
-    transactions = StaffTransaction.objects.filter(staff_id=staff_id).order_by('-created_at')
-    data = [
+    return JsonResponse(
         {
-            "date": t.created_at.strftime("%Y-%m-%d %H:%M"),
-            "points": t.submission.total_points,
-            "notes": t.notes
+            "total_detected": total_detected,
+            "confidence_score": confidence,
+            "suggested_size": suggested_size,
+            "bottle_sizes": bottle_counts,
         }
-        for t in transactions
-    ]
-    return Response({"success": True, "transactions": data})
+    )
 
 
-@csrf_exempt
-@require_POST
-def delete_staff(request, staff_id):
-    try:
-        staff = get_object_or_404(User, pk=staff_id, user_type='staff')
+# ==============================================================================
+# CSV Exports (NOW: SUMMARY CSVs)
+# ==============================================================================
 
-        # Delete all submissions linked to this staff (transactions will auto-delete if cascade is set in StaffTransaction)
-        Submission.objects.filter(staff=staff).delete()
-
-        # Finally, delete the staff account
-        staff.delete()
-
-        return JsonResponse({'success': True})
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)})
-    
-
-# ------------------RESIDENT MANAGEMENT ------------------
-
-@csrf_exempt
-@require_POST
-def resident_signup_api(request):
-    try:
-        data = json.loads(request.body.decode('utf-8'))
-
-        name = f"{data['first_name']} {data['last_name']}"
-        email = data['email']
-        password = data['password']
-
-        # CORRECTED: Default to None instead of an empty string
-        mobile_number = data.get('mobile', None)
-
-        # Check if email already exists
-        if User.objects.filter(email=email, user_type='resident').exists():
-            return JsonResponse({'success': False, 'error': 'An account with this email already exists.'}, status=400)
-
-        # NEW: Check for mobile number duplicate only if one is provided
-        if mobile_number and User.objects.filter(mobile_number=mobile_number).exists():
-            return JsonResponse({'success': False, 'error': 'An account with this mobile number already exists.'}, status=400)
-
-        # Create resident
-        User.objects.create(
-            name=name,
-            email=email,
-            mobile_number=mobile_number, # This will now be None if not provided
-            password_hash=make_password(password),
-            user_type='resident',
-            barangay="",
-            is_approved=True,
-            date_joined=timezone.now(), # Use timezone.now() for consistency
-            account_status='active',
-            registered_by_admin=False
-        )
-
-        return JsonResponse({'success': True, 'message': 'Account created successfully'})
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+def _summarize_bottles(bottle_data):
+    small = large = 0
+    for it in bottle_data or []:
+        size = (it.get("size") or "").lower()
+        try:
+            count = int(it.get("count", it.get("quantity", 0)) or 0)
+        except Exception:
+            count = 0
+        if size == "small":
+            small += count
+        elif size == "large":
+            large += count
+    return {"small": small, "large": large}
 
 
-@csrf_exempt
-@require_POST
-def resident_login_api(request):
-    try:
-        data = json.loads(request.body.decode('utf-8'))
-        email = data.get("email")
-        password = data.get("password")
-
-        if not email or not password:
-            return JsonResponse({"success": False, "error": "Missing credentials."}, status=400)
-
-        user = User.objects.filter(email=email, user_type='resident').first()
-        if not user:
-            return JsonResponse({"success": False, "error": "Account not found."}, status=404)
-
-        # ✅ Check password
-        if not check_password(password, user.password_hash):
-            return JsonResponse({"success": False, "error": "Incorrect password."}, status=400)
-
-        # ✅ Calculate total points (in case it's stored in a different way)
-        total_points = getattr(user, "total_points", 0)
-
-        return JsonResponse({
-            "success": True,
-            "message": "Login successful.",
-            "user": {
-                "id": user.id,
-                "name": user.name,
-                "email": user.email,
-                "points": total_points
-            }
-        })
-    except Exception as e:
-        return JsonResponse({"success": False, "error": str(e)}, status=500)
-    
-
-@csrf_exempt
-@require_GET
-def get_user_details(request, user_id):
+def _apply_submission_filters(qs, request):
     """
-    Returns user details for the mobile dashboard & profile.
-    Includes name, total points, and weekly quota progress.
+    Optional filters: ?from=YYYY-MM-DD&to=YYYY-MM-DD&status=claimed|pending|...
     """
-    try:
-        user = User.objects.filter(pk=user_id, user_type='resident').first()
-        if not user:
-            return JsonResponse({"success": False, "error": "User not found"}, status=404)
+    date_from = request.GET.get("from")
+    date_to = request.GET.get("to")
+    status = request.GET.get("status")
+    if date_from:
+        qs = qs.filter(created_at__date__gte=date_from)
+    if date_to:
+        qs = qs.filter(created_at__date__lte=date_to)
+    if status:
+        qs = qs.filter(status=status)
+    return qs
 
-        total_points = getattr(user, "total_points", 0) or 0
-        WEEKLY_TARGET = 50  # bottles per week for 100% quota
 
-        start_of_week = timezone.now().date() - timedelta(days=timezone.now().weekday())
-        weekly_submissions = Submission.objects.filter(
-            user=user,
-            created_at__date__gte=start_of_week
-        )
+def _months_between(d1: date, d2: date) -> int:
+    """Inclusive month span, min 1. If d1 > d2 returns 1."""
+    if not d1 or not d2 or d1 > d2:
+        return 1
+    return (d2.year - d1.year) * 12 + (d2.month - d1.month) + 1
 
-        bottles_this_week = 0
-        for sub in weekly_submissions:
-            if isinstance(sub.bottle_data, list):
-                for bottle in sub.bottle_data:
-                    bottles_this_week += bottle.get('quantity', 0)
 
-        quota_progress = min(bottles_this_week / WEEKLY_TARGET, 1.0) if WEEKLY_TARGET > 0 else 0.0
-
-        return JsonResponse({
-            "success": True,
-            "id": user.id,
-            "name": user.name,
-            "points": total_points,
-            "quota_progress": quota_progress
-        }, status=200)
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return JsonResponse({"success": False, "error": str(e)}, status=500)
-
-# ------------------ QUIZ API FOR FLUTTER APP ------------------
-# ------------------ REVISED QUIZ API (FOR FLUTTER APP) ------------------
-
-def _get_quiz_availability(user_id):
+def _site_summary(site: DropOffSite, base_qs) -> dict:
     """
-    A helper function that checks daily/weekly quiz completion for a user.
-    Returns a dictionary with availability status. This prevents code duplication.
+    Compute summary metrics for a site from a base submissions queryset already filtered by site & date range.
+    Returns dict with totals and averages.
     """
-    user = get_object_or_404(User, pk=user_id)
-    today = timezone.now().date()
-    start_of_week = today - timezone.timedelta(days=today.weekday())
+    qs = base_qs
 
-    daily_completed = QuizSession.objects.filter(
-        user=user, quiz_type='daily', completed_at__date=today
-    ).exists()
+    # basic aggregations
+    agg = qs.aggregate(
+        total_claimed_points=Sum("claimed_points"),
+        first_dt=Min("created_at"),
+        last_dt=Max("created_at"),
+    )
+    total_submissions = qs.count()
+    total_points = int(agg["total_claimed_points"] or 0)
 
-    weekly_completed = QuizSession.objects.filter(
-        user=user, quiz_type='weekly', completed_at__date__gte=start_of_week
-    ).exists()
+    # bottle totals (iterate light)
+    small = large = 0
+    for s in qs.only("bottle_data"):
+        bsum = _summarize_bottles(s.bottle_data)
+        small += bsum["small"]
+        large += bsum["large"]
+    total_bottles = small + large
+
+    first_date = localtime(agg["first_dt"]).date() if agg["first_dt"] else None
+    last_date = localtime(agg["last_dt"]).date() if agg["last_dt"] else None
+    months_covered = _months_between(first_date, last_date) if first_date and last_date else 1
+
+    avg_submissions_per_month = round(total_submissions / months_covered, 2) if total_submissions else 0.0
+    avg_points_per_submission = round(total_points / total_submissions, 2) if total_submissions else 0.0
+    avg_bottles_per_submission = round(total_bottles / total_submissions, 2) if total_submissions else 0.0
+
+    staff_count = site.staff_members.count()
+    residents_served = (
+        qs.exclude(claimed_by__isnull=True).values_list("claimed_by_id", flat=True).distinct().count()
+    )
 
     return {
-        "daily_available": not daily_completed,
-        "weekly_available": not weekly_completed,
+        "site_id": site.id,
+        "barangay": site.barangay.name if site.barangay else "",
+        "staff_count": staff_count,
+        "total_submissions": total_submissions,
+        "total_bottles_small": small,
+        "total_bottles_large": large,
+        "total_bottles": total_bottles,
+        "total_claimed_points": total_points,
+        "first_submission_date": first_date.isoformat() if first_date else "",
+        "last_submission_date": last_date.isoformat() if last_date else "",
+        "months_covered": months_covered,
+        "avg_submissions_per_month": avg_submissions_per_month,
+        "avg_points_per_submission": avg_points_per_submission,
+        "avg_bottles_per_submission": avg_bottles_per_submission,
+        "unique_residents_served": residents_served,
     }
 
 
-@api_view(['GET'])
-@csrf_exempt
-def get_quiz_status(request, user_id):
+def _summary_csv_response(filename: str, rows: List[dict]) -> HttpResponse:
+    response = HttpResponse(content_type="text/csv; charset=utf-8")
+    response.write("\ufeff")  # BOM for Excel
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+
+    headers = [
+        "site_id",
+        "barangay",
+        "staff_count",
+        "total_submissions",
+        "total_bottles_small",
+        "total_bottles_large",
+        "total_bottles",
+        "total_claimed_points",
+        "first_submission_date",
+        "last_submission_date",
+        "months_covered",
+        "avg_submissions_per_month",
+        "avg_points_per_submission",
+        "avg_bottles_per_submission",
+        "unique_residents_served",
+    ]
+
+    writer = csv.DictWriter(response, fieldnames=headers)
+    writer.writeheader()
+    for r in rows:
+        writer.writerow({k: r.get(k, "") for k in headers})
+    return response
+
+
+def export_all_submissions_csv(request):
     """
-    API Endpoint for Flutter: Checks if the daily and weekly quizzes are available.
+    NOW: Overall SUMMARY CSV.
+    - One row per DropOffSite (per barangay).
+    - Supports optional ?from=YYYY-MM-DD&to=YYYY-MM-DD&status=<status>.
     """
-    try:
-        # This view now simply calls the helper function and returns its result.
-        availability_data = _get_quiz_availability(user_id)
-        return JsonResponse({"success": True, **availability_data})
-    except Exception as e:
-        return JsonResponse({"success": False, "error": str(e)}, status=500)
+    if not (request.user.is_authenticated or _admin_bypass_ok(request)):
+        return HttpResponse(status=401)
+
+    rows = []
+    sites = DropOffSite.objects.select_related("barangay").prefetch_related("staff_members")
+    for site in sites:
+        qs = Submission.objects.filter(dropoff_site=site)
+        qs = _apply_submission_filters(qs, request)
+        rows.append(_site_summary(site, qs))
+
+    return _summary_csv_response("sites_summary_all.csv", rows)
 
 
-@api_view(['GET'])
-@csrf_exempt
-def get_quiz_questions(request, quiz_type, user_id):
+def export_site_submissions_csv(request, site_id: int):
     """
-    API Endpoint for Flutter: Gets a random set of questions for a quiz.
+    NOW: Per-site SUMMARY CSV (single-row).
+    - Optional filters ?from=YYYY-MM-DD&to=YYYY-MM-DD&status=<status>.
     """
-    try:
-        # This view also calls the helper function for validation.
-        availability_data = _get_quiz_availability(user_id)
+    if not (request.user.is_authenticated or _admin_bypass_ok(request)):
+        return HttpResponse(status=401)
 
-        if quiz_type == 'daily' and not availability_data.get('daily_available'):
-            return JsonResponse({"success": False, "error": "Daily quiz already completed."}, status=403)
-        if quiz_type == 'weekly' and not availability_data.get('weekly_available'):
-            return JsonResponse({"success": False, "error": "Weekly quiz already completed."}, status=403)
-
-        if quiz_type == 'daily':
-            question_count = 15
-        elif quiz_type == 'weekly':
-            question_count = 25
-        else:
-            return JsonResponse({"success": False, "error": "Invalid quiz type."}, status=400)
-
-        questions = Quiz.objects.order_by('?').all()[:question_count]
-        
-        question_data = list(questions.values(
-            'id', 'question_type', 'question', 'option_a', 
-            'option_b', 'option_c', 'option_d'
-        ))
-
-        return JsonResponse({"success": True, "questions": question_data})
-    except Exception as e:
-        return JsonResponse({"success": False, "error": str(e)}, status=500)
+    site = get_object_or_404(DropOffSite.objects.select_related("barangay").prefetch_related("staff_members"), pk=site_id)
+    qs = Submission.objects.filter(dropoff_site=site)
+    qs = _apply_submission_filters(qs, request)
+    row = _site_summary(site, qs)
+    return _summary_csv_response(f"site_{site.id}_summary.csv", [row])
 
 
-@api_view(['POST'])
-@csrf_exempt
-def submit_quiz_answers(request):
-    """
-    Submits answers, calculates a precise score, and awards points.
-    Includes bonus points for a perfect daily quiz.
-    NOTE: Points are scaled by 100 to handle fractions as integers (e.g., 5 points = 500).
-    """
-    try:
-        data = request.data
-        user_id = data.get('user_id')
-        quiz_type = data.get('quiz_type')
-        answers = data.get('answers', [])
+# ==============================================================================
+# Drop-off Site deletion (used by template's JS button)
+# ==============================================================================
 
-        user = get_object_or_404(User, pk=user_id)
-
-        # --- Scoring Logic ---
-        correct_answers_count = 0
-        total_questions = len(answers)
-        if total_questions == 0:
-            return JsonResponse({"success": False, "error": "No answers provided."}, status=400)
-
-        question_ids = [ans['question_id'] for ans in answers]
-        correct_answers_map = {q.id: q for q in Quiz.objects.filter(id__in=question_ids)}
-
-        for answer in answers:
-            question = correct_answers_map.get(answer['question_id'])
-            if question and question.correct_option == answer.get('selected_option'):
-                correct_answers_count += 1
-        
-        # --- NEW & PRECISE: Points Calculation Logic ---
-        base_points_awarded = 0
-        bonus_points_awarded = 0
-        is_perfect_score = (correct_answers_count == total_questions)
-
-        # Define max points for each quiz type (scaled by 100)
-        SCALING_FACTOR = 100
-        MAX_POINTS_DAILY = 5 * SCALING_FACTOR  # 500 units
-        MAX_POINTS_WEEKLY = 25 * SCALING_FACTOR # 2500 units
-
-        if quiz_type == 'daily':
-            # Calculate points based on performance: (correct / total) * max_points
-            base_points_awarded = (correct_answers_count * MAX_POINTS_DAILY) // total_questions
-            
-            # Add bonus for a perfect score
-            if is_perfect_score:
-                bonus_points_awarded = 5 * SCALING_FACTOR # 500 bonus units
-        
-        elif quiz_type == 'weekly':
-            # You can apply the same precision here if you want
-            base_points_awarded = (correct_answers_count * MAX_POINTS_WEEKLY) // total_questions
-            # Optional: Add a weekly bonus for perfect score
-            # if is_perfect_score:
-            #     bonus_points_awarded = 10 * SCALING_FACTOR
-
-        total_points_to_award = base_points_awarded + bonus_points_awarded
-
-        # --- Update User and Session ---
-        # The user's total_points is an integer, so this works perfectly.
-        user.total_points += total_points_to_award
-        user.save(update_fields=['total_points'])
-
-        QuizSession.objects.create(
-            user=user,
-            quiz_type=quiz_type,
-            correct_answers=correct_answers_count,
-            total_questions=total_questions,
-            points_awarded=total_points_to_award # Store the scaled integer
-        )
-
-        # --- Return detailed result to Flutter App ---
-        # We send the scaled integers. The app will be responsible for formatting.
-        return JsonResponse({
-            "success": True,
-            "message": "Quiz submitted successfully!",
-            "correct_answers": correct_answers_count,
-            "total_questions": total_questions,
-            "base_points_awarded": base_points_awarded,
-            "bonus_points_awarded": bonus_points_awarded,
-            "total_points_awarded": total_points_to_award,
-        }, status=201)
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return JsonResponse({"success": False, "error": str(e)}, status=500)
+@require_POST
+@require_staff_json
+def delete_dropoff_site(request, site_id: int):
+    site = get_object_or_404(DropOffSite, pk=site_id)
+    site.delete()
+    return JsonResponse({"success": True})

@@ -1,247 +1,350 @@
-"""
-General Remarks:
-- remove ID fields because it is already provided automatically by django
-    data type of ID fields are indicated in settings.py --> DEFAULT_AUTO_FIELD
-- structure models via  availability of ForeignKey fields 
-    models with no FK field should be on top
-- Make your custom user model inherit from django's standard user model: https://docs.djangoproject.com/en/5.2/topics/auth/customizing/
-    After doing this, go to settings.py and add AUTH_MODEL = 'dashboard.User'
+# dashboard/models.py
+from __future__ import annotations
 
-
-Extras:
-- `User.user_type` can be removed and instead, use django's Group model
-- Create Barangay Model
-- Use https://nominatim.org/ for geolocation for complete barangay and automated
-- 
-"""
+import secrets  # NEW: for QR token generator
 
 from django.db import models
+from django.conf import settings
+from django.core.validators import MinValueValidator
+from django.contrib.auth.models import AbstractUser
 
-# Imports by Jxst-Felix
-from django.contrib.auth.models import AbstractUser as StandardUserModel # this is the standard User model of django, inherit this for your custom user model
-from django.contrib.auth.models import Group # this is the Group model of django, you can assign this to users and you can assign certain permissions to users that belongs to this group
+
+# =============================================================
+#  Helpers
+# =============================================================
+
+def generate_qr_token() -> str:
+    """Random, URL-safe token for QR codes (≈32 chars)."""
+    return secrets.token_urlsafe(24)
 
 
-# -------------------------
-# DROP-OFF SITE TABLE
-# -------------------------
+# =============================================================
+#  Top-level (no FK) models first
+# =============================================================
+
+class Barangay(models.Model):
+    """Tacloban barangays (admin-managed list)."""
+    name = models.CharField(max_length=150, unique=True)
+    city = models.CharField(max_length=150, default="Tacloban City")
+
+    class Meta:
+        db_table = "barangays"
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["name", "city"], name="uniq_barangay_name_city"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.name}, {self.city}"
+
+
+class User(AbstractUser):
+    """
+    Custom user model.
+    - Use Django Groups ('resident', 'staff') to differentiate roles.
+    - Staff accounts are approved via StaffApprovalRequest.
+    - Residents are active immediately on signup.
+    """
+    mobile_number = models.CharField(max_length=20, unique=True, null=True, blank=True)
+    barangay = models.ForeignKey(Barangay, on_delete=models.SET_NULL, null=True, blank=True, related_name="users")
+
+    is_approved = models.BooleanField(default=False)
+
+    ACCOUNT_STATUS_CHOICES = (("active", "Active"), ("disabled", "Disabled"))
+    account_status = models.CharField(max_length=10, choices=ACCOUNT_STATUS_CHOICES, default="active")
+
+    registered_by_admin = models.BooleanField(default=False)
+    weekly_bonus_given = models.DateField(null=True, blank=True)
+
+    total_points = models.PositiveIntegerField(default=0, validators=[MinValueValidator(0)])
+
+    class Meta:
+        db_table = "users"
+        ordering = ["username"]
+        indexes = [
+            models.Index(fields=["username"]),
+            models.Index(fields=["email"]),
+            models.Index(fields=["mobile_number"]),
+        ]
+
+    def __str__(self) -> str:
+        return self.get_full_name() or self.username
+
+
+# =============================================================
+#  FK-bearing models
+# =============================================================
+
+# dashboard/models.py
+
 class DropOffSite(models.Model):
-    id = models.AutoField(primary_key=True)
-    barangay = models.CharField(max_length=100, unique=True)
-    assigned_staff = models.OneToOneField(
-        'User',
-        on_delete=models.SET_NULL,
-        null=True,
+    """One drop-off site per barangay; multiple staff can be assigned."""
+    barangay = models.OneToOneField(
+        Barangay, on_delete=models.PROTECT, related_name="dropoff_site"
+    )
+    staff_members = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
         blank=True,
-        related_name='dropoff_site'
+        related_name="assigned_sites",
     )
 
     class Meta:
-        managed = True
-        db_table = 'dropoff_sites'
+        db_table = "dropoff_sites"
 
-    def __str__(self):
-        return f"{self.barangay} Drop-Off Site"
+    def __str__(self) -> str:
+        return f"{self.barangay.name} Drop-Off Site"
 
-# -------------------------
-# USER TABLE (Residents & Staff)
-# -------------------------
-class User(models.Model):
+
+
+# --------- Adjustable Points (singleton) ---------
+
+class PointsConfig(models.Model):
     """
-    Redundant models if inheriting from standard django user model:
-    - email
-    - password hash --> password
-    - date_joined
-    ---
-
-    Possible redundant fields:
-    - is_approved --> is_staff
+    Global, adjustable bottle points (small/large).
+    Enforced singleton via a constant unique field.
     """
-    id = models.AutoField(primary_key=True)
-    name = models.CharField(max_length=255)
-    email = models.CharField(max_length=255)
-    mobile_number = models.CharField(max_length=20, unique=True, null=True, blank=True)
-    password_hash = models.TextField()
-    user_type = models.CharField(max_length=10)  # 'resident' or 'staff'
-    barangay = models.CharField(max_length=100, blank=True)
-    is_approved = models.BooleanField(default=False)
-    date_joined = models.DateTimeField()
-    account_status = models.CharField(max_length=10)  # 'active' or 'disabled'
-    registered_by_admin = models.BooleanField()
-    weekly_bonus_given = models.DateField(null=True, blank=True)
-    total_points = models.IntegerField(default=0)
+    singleton = models.PositiveSmallIntegerField(default=1, unique=True, editable=False)
+    small_bottle_points = models.PositiveIntegerField(
+        default=5, validators=[MinValueValidator(0)], help_text="Points per SMALL bottle"
+    )
+    large_bottle_points = models.PositiveIntegerField(
+        default=10, validators=[MinValueValidator(0)], help_text="Points per LARGE bottle"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        managed = True
-        db_table = 'users'
+        db_table = "points_config"
 
-    def __str__(self):
-        return self.name
+    def __str__(self) -> str:
+        return f"PointsConfig(small={self.small_bottle_points}, large={self.large_bottle_points})"
 
-# -------------------------
-# SUBMISSIONS TABLE
-# -------------------------
+    def save(self, *args, **kwargs):
+        # Always keep singleton marker = 1 so only one row can exist
+        self.singleton = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def current(cls) -> "PointsConfig":
+        obj, _ = cls.objects.get_or_create(singleton=1, defaults={})
+        return obj
+
+
 class Submission(models.Model):
     """
-    Possible improvements:
-    - Use Many-to-Many fields on bottle_data
-    ---
-    
-    Extras:
-    - Use models.FileField for image_path
-    - Remember what the pupose of estimated_quantity and confidence_score
+    Bottle drop-off created by staff, claimed by resident via QR.
+    bottle_data = [{"size": "small"|"large", "count": int}, ...]
     """
-    # ... This model remains unchanged ...
-    id = models.AutoField(primary_key=True)
-    qr_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
-    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='submissions')
-    staff = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='processed_submissions')
-    dropoff_site = models.ForeignKey(DropOffSite, on_delete=models.SET_NULL, null=True, related_name='submissions')
-    bottle_data = models.JSONField(default=list)
-    total_points = models.IntegerField()
-    source = models.CharField(max_length=20, default='manual')
-    image_path = models.TextField(blank=True, null=True)
-    estimated_quantity = models.IntegerField(blank=True, null=True)
+    SOURCE_CHOICES = (("manual", "Manual"), ("vision", "Vision"))
+    STATUS_CHOICES = (("pending", "Pending"), ("claimed", "Claimed"), ("expired", "Expired"), ("voided", "Voided"))
+
+    # Optional resident linked at intake (can be null until claim); the claimer is stored in 'claimed_by'.
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="submissions"
+    )
+    staff = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="processed_submissions"
+    )
+    dropoff_site = models.ForeignKey(DropOffSite, on_delete=models.PROTECT, null=True, related_name="submissions")
+
+    bottle_data = models.JSONField(default=list, blank=True)  # [{"size":"small|large","count":N}]
+    proposed_points = models.PositiveIntegerField(default=0)
+    claimed_points = models.PositiveIntegerField(default=0)
+
+    # NEW: default generator so migrations can populate existing rows
+    qr_token = models.CharField(
+        max_length=64,
+        unique=True,
+        default=generate_qr_token,
+        editable=False,
+    )
+    qr_expires_at = models.DateTimeField(null=True, blank=True)
+
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="pending")
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default="manual")
+
+    image = models.ImageField(upload_to="submissions/", blank=True, null=True)
+
+    claimed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="claimed_submissions"
+    )
+    claimed_at = models.DateTimeField(null=True, blank=True)
+
+    # (Optional) for future vision use
+    estimated_quantity = models.PositiveIntegerField(blank=True, null=True)
     confidence_score = models.FloatField(blank=True, null=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        managed = True
-        db_table = 'submissions'
+        db_table = "submissions"
+        indexes = [
+            models.Index(fields=["qr_token"]),
+            models.Index(fields=["status"]),
+            models.Index(fields=["created_at"]),
+            models.Index(fields=["claimed_by"]),
+            models.Index(fields=["dropoff_site"]),
+        ]
+        ordering = ["-created_at"]
 
-    def __str__(self):
-        user_name = self.user.name if self.user else "Unlinked User"
-        return f"Submission for {user_name} - {self.total_points} pts"
+    def __str__(self) -> str:
+        who = getattr(self.claimed_by or self.user, "username", None) or "Unclaimed"
+        return f"Submission({who}, {self.proposed_points}->{self.claimed_points} pts, {self.status})"
 
-# -------------------------
-# STAFF TRANSACTION HISTORY TABLE
-# -------------------------
+
 class StaffTransaction(models.Model):
-    # ... This model remains unchanged ...
-    id = models.AutoField(primary_key=True)
-    staff = models.ForeignKey(User, on_delete=models.CASCADE, related_name='staff_transactions')
-    submission = models.ForeignKey(Submission, on_delete=models.CASCADE, related_name='transaction_record')
-    action = models.CharField(max_length=50, default='submission_made')
+    staff = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="staff_transactions")
+    submission = models.ForeignKey(Submission, on_delete=models.CASCADE, related_name="transaction_record")
+    action = models.CharField(max_length=50, default="submission_created")
     notes = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        managed = True
-        db_table = 'staff_transactions'
+        db_table = "staff_transactions"
+        ordering = ["-created_at"]
 
-# -------------------------
-# REWARD REQUESTS TABLE
-# -------------------------
+    def __str__(self) -> str:
+        return f"StaffTransaction({self.staff_id}, {self.action}, sub={self.submission_id})"
+
+
+class UserPointsLedger(models.Model):
+    SOURCE_CHOICES = (("submission_claim", "Submission Claim"), ("diy_submit", "DIY Submission"), ("adjustment", "Adjustment"))
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="points_ledger")
+    submission = models.ForeignKey(Submission, on_delete=models.SET_NULL, null=True, blank=True, related_name="ledger_entries")
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES)
+    delta_points = models.IntegerField()
+    balance_after = models.PositiveIntegerField(default=0)
+    notes = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "user_points_ledger"
+        indexes = [models.Index(fields=["user", "created_at"])]
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"Ledger({self.user_id}: {self.delta_points} → {self.balance_after})"
+
+
 class RewardRequest(models.Model):
-    """
-    Remarks:
-    - change `amount` and `points_used`
-    - Refactor model
-    """
-    # ... This model remains unchanged ...
-    id = models.AutoField(primary_key=True)
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    TELCO_CHOICES = (("globe", "Globe"), ("smart", "Smart"), ("dito", "DITO"), ("other", "Other"))
+    STATUS_CHOICES = (("requested", "Requested"), ("paid", "Paid"), ("rejected", "Rejected"))
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="reward_requests")
     mobile_number = models.CharField(max_length=20)
-    telco = models.CharField(max_length=10)
-    points_used = models.IntegerField()
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
-    status = models.CharField(max_length=10)
-    processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='processed_rewards')
-    date_requested = models.DateTimeField()
-    date_processed = models.DateTimeField(null=True)
-
-    class Meta:
-        managed = True
-        db_table = 'reward_requests'
-
-
-# -------------------------
-# QUIZ QUESTIONS TABLE (MODIFIED)
-# -------------------------
-class Quiz(models.Model):
-    id = models.AutoField(primary_key=True)
-
-    QUESTION_TYPE_CHOICES = [
-        ('multiple_choice', 'Multiple Choice'),
-        ('true_false', 'True/False'),
-    ]
-    question_type = models.CharField(
-        max_length=20,
-        choices=QUESTION_TYPE_CHOICES,
-        default='multiple_choice'
+    telco = models.CharField(max_length=10, choices=TELCO_CHOICES, default="other")
+    points_used = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    amount = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])  # PHP
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="requested")
+    processed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="processed_rewards"
     )
-    
-    question = models.TextField()
-
-    # These fields are now optional, only used for 'multiple_choice'
-    option_a = models.TextField(blank=True, null=True)
-    option_b = models.TextField(blank=True, null=True)
-    option_c = models.TextField(blank=True, null=True)
-    option_d = models.TextField(blank=True, null=True)
-
-    # For 'multiple_choice', this will be 'a', 'b', 'c', 'd'.
-    # For 'true_false', this will be 'true' or 'false'.
-    correct_option = models.CharField(max_length=10)
-    
-    # This is kept for potential future use or for admin reference
-    points = models.IntegerField(default=1)
+    date_requested = models.DateTimeField(auto_now_add=True)
+    date_processed = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        managed = True
-        db_table = 'quizzes'
+        db_table = "reward_requests"
+        ordering = ["-date_requested"]
+        indexes = [
+            models.Index(fields=["status"]),
+            models.Index(fields=["date_requested"]),
+            models.Index(fields=["mobile_number"]),
+        ]
 
-    def __str__(self):
-        return self.question
+    def __str__(self) -> str:
+        return f"RewardRequest({self.user_id}, {self.amount} PHP, {self.status})"
 
-# -------------------------
-# QUIZ ANSWERS TABLE (MODIFIED)
-# -------------------------
-class QuizAnswer(models.Model):
-    id = models.AutoField(primary_key=True)
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='quiz_answers')
-    quiz = models.ForeignKey(Quiz, on_delete=models.CASCADE, related_name='user_answers')
-    
-    # Increased max_length to accommodate 'true'/'false'
-    selected_option = models.CharField(max_length=10)
-    is_correct = models.BooleanField()
-    date_answered = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        managed = True
-        db_table = 'quiz_answers'
+class StaffApprovalRequest(models.Model):
+    STATUS_CHOICES = (("pending", "Pending"), ("approved", "Approved"), ("rejected", "Rejected"))
 
-# -------------------------
-# QUIZ SESSION TABLE (MODIFIED)
-# -------------------------
-class QuizSession(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='quiz_sessions')
-    
-    QUIZ_TYPE_CHOICES = [
-        ('daily', 'Daily Quiz'),
-        ('weekly', 'Weekly Quiz'),
-    ]
-    quiz_type = models.CharField(max_length=10, choices=QUIZ_TYPE_CHOICES)
-    
-    correct_answers = models.IntegerField()
-    total_questions = models.IntegerField()
-    points_awarded = models.IntegerField(default=0)
-    
-    completed_at = models.DateTimeField(auto_now_add=True)
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="staff_approval")
+    requested_barangay = models.ForeignKey(Barangay, on_delete=models.SET_NULL, null=True, blank=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="pending")
+    notes = models.TextField(blank=True)
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="decided_staff_requests"
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        managed = True
-        db_table = 'quiz_sessions'
+        db_table = "staff_approval_requests"
+        ordering = ["-created_at"]
 
-# -------------------------
-# USER BADGES TABLE
-# -------------------------
-class UserBadge(models.Model):
-    # ... This model remains unchanged ...
-    id = models.AutoField(primary_key=True)
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='badges')
-    badge_name = models.CharField(max_length=100)
-    awarded_at = models.DateTimeField(auto_now_add=True)
+    def __str__(self) -> str:
+        return f"StaffApprovalRequest({self.user_id}, {self.status})"
+
+
+# =============================================================
+#  DIY Tutorials (replaces Quiz)
+# =============================================================
+
+class DIYTutorial(models.Model):
+    title = models.CharField(max_length=200)
+    description = models.TextField(help_text="Instructions and materials list.")
+    video_url = models.URLField()
+    duration_seconds = models.PositiveIntegerField(null=True, blank=True)
+    thumbnail = models.ImageField(upload_to="diy_thumbs/", null=True, blank=True)
+    points_on_submit = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        managed = True
-        db_table = 'user_badges'
+        db_table = "diy_tutorials"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return self.title
+
+
+class DIYDailyPool(models.Model):
+    """Admin-curated pool of tutorials for a given date (from which one is picked)."""
+    date = models.DateField(unique=True)
+    tutorials = models.ManyToManyField(DIYTutorial, related_name="daily_pools")
+
+    class Meta:
+        db_table = "diy_daily_pools"
+        ordering = ["-date"]
+
+    def __str__(self) -> str:
+        return f"DIY Pool for {self.date}"
+
+
+class DIYDailySelection(models.Model):
+    """The single tutorial selected (randomly or round-robin) for a given date."""
+    date = models.DateField(unique=True)
+    pool = models.ForeignKey(DIYDailyPool, on_delete=models.CASCADE, null=True, blank=True, related_name="selections")
+    tutorial = models.ForeignKey(DIYTutorial, on_delete=models.PROTECT, related_name="daily_selections")
+    selected_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "diy_daily_selections"
+        ordering = ["-date"]
+
+    def __str__(self) -> str:
+        return f"DIYDailySelection({self.date}: {self.tutorial})"
+
+
+class DIYSubmission(models.Model):
+    """User’s optional photo proof for a DIY; awards points once."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="diy_submissions")
+    tutorial = models.ForeignKey(DIYTutorial, on_delete=models.CASCADE, related_name="user_submissions")
+    image = models.ImageField(upload_to="diy_submissions/")
+    caption = models.CharField(max_length=280, blank=True)
+    is_public = models.BooleanField(default=True)
+    approved = models.BooleanField(default=True)
+    points_awarded = models.PositiveIntegerField(default=0)
+    awarded_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "diy_submissions"
+        unique_together = ("user", "tutorial")
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"DIYSubmission by {self.user_id} on {self.tutorial_id}"

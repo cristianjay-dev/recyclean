@@ -2,49 +2,87 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    # ------------------ Dashboard ------------------
-    path('', views.dashboard, name='dashboard'),
-    path('rewards/', views.reward_requests_view, name='reward_requests'),
+    # ------------------ Dashboard (server-rendered) ------------------
+    path("", views.dashboard, name="dashboard"),
+    path("rewards/", views.reward_requests_view, name="reward_requests"),
 
-    # ------------------ Image Processing ------------------
-    path('analyze/', views.analyze_image, name='analyze_image'),
+    # ------------------ Image Processing (prototype) -----------------
+    path("analyze/", views.analyze_image, name="analyze_image"),
 
-    # ------------------ REVISED: Quiz Management (Admin) ------------------
-    path('quiz/', views.quiz_dashboard, name='quiz_dashboard'),
-    path('quiz/create/', views.create_quiz, name='create_quiz'),
-    path('quiz/update/<int:quiz_id>/', views.update_question, name='update_question'),
-    path('quiz/delete/<int:question_id>/', views.delete_question, name='delete_question'),
+    # ------------------ Drop-off Sites (server-rendered) -------------
+    path("dropoff-sites/", views.dropoff_sites_view, name="dropoff_sites_view"),
+    path("dropoff-sites/<int:site_id>/", views.dropoff_site_detail, name="dropoff_site_detail"),
+    path(
+        "dropoff-sites/<int:site_id>/submissions/",
+        views.submissions_by_dropoff_site,
+        name="submissions_by_dropoff_site",
+    ),
+    # CSV exports
+    path("exports/submissions.csv", views.export_all_submissions_csv, name="export_all_submissions_csv"),
 
-    # ------------------ Staff & Drop-off Site Management ------------------
-    path('dropoff-sites/', views.dropoff_sites_view, name='dropoff_sites_view'),
-    path('staff-management/', views.staff_management_view, name='staff_management_view'),
-    path('approve-staff/<int:user_id>/', views.approve_staff, name='approve_staff'),
-    path('reject-staff/<int:user_id>/', views.reject_staff, name='reject_staff'),
-    path('delete-staff/<int:staff_id>/', views.delete_staff, name='delete_staff'),
-    path('dropoff-sites/<int:site_id>/', views.dropoff_site_detail, name='dropoff_site_detail'),
-    path('delete-dropoff-site/<int:site_id>/', views.delete_dropoff_site, name='delete_dropoff_site'),
-    
-    # ------------------ API (Staff App) ------------------
-    path('api/staff-signup/', views.staff_signup_api, name='staff_signup_api'),
-    path('api/staff-login/', views.staff_login_view, name='staff_login'),
-    path('get-staff-transactions/<int:staff_id>/', views.get_staff_transactions, name='get_staff_transactions'),
-    path('api/staff/metrics/<int:staff_id>/', views.staff_metrics, name='staff_metrics'),
-    path('api/process-qr-submission/', views.process_qr_submission, name='process_qr_submission'),
-    path('api/staff/<int:staff_id>/transactions/', views.staff_transaction_history, name='staff_transaction_history'),
+    path(
+        "dropoff-sites/<int:site_id>/export.csv",
+        views.export_site_submissions_csv,
+        name="export_site_submissions_csv",
+    ),
+    # Delete site (used by your template's fetch to /delete-dropoff-site/<id>/)
+    path("delete-dropoff-site/<int:site_id>/", views.delete_dropoff_site, name="delete_dropoff_site"),
 
-    # ------------------ API (User App) ------------------
-    path('api/user-signup/', views.resident_signup_api, name='resident_signup_api'),
-    path('api/user-login/', views.resident_login_api, name='resident_login_api'),
-    path('api/user/<int:user_id>/', views.get_user_details, name='get_user_details'),
-    
-    # Redeem rewards (Reloadly)
-    path('api/redeem-reward/', views.redeem_reward_api, name='redeem_reward_api'),
-    
-    # ------------------ REVISED: Quiz API (User App) ------------------
-    path('api/quizzes/status/<int:user_id>/', views.get_quiz_status, name='api_get_quiz_status'),
-    path('api/quizzes/questions/<str:quiz_type>/<int:user_id>/', views.get_quiz_questions, name='api_get_quiz_questions'),
-    path('api/quizzes/submit/', views.submit_quiz_answers, name='api_submit_quiz_answers'),
+    # ------------------ Staff Management (server-rendered) -----------
+    path("staff-management/", views.staff_management_view, name="staff_management_view"),
 
-    # ------------------ WEBHOOKS ------------------
-    path('webhooks/reloadly/', views.reloadly_webhook, name='reloadly_webhook'),
+    # ------------------ Auth: Staff ---------------------------------
+    path("api/auth/staff/signup/", views.StaffSignupView.as_view(), name="staff_signup"),
+    path("api/auth/staff/login/", views.StaffLoginView.as_view(), name="staff_login"),
+    path("api/auth/staff/approve/<int:user_id>/", views.ApproveStaffView.as_view(), name="approve_staff"),
+    path("api/auth/staff/reject/<int:user_id>/", views.RejectStaffView.as_view(), name="reject_staff"),
+
+    # ------------------ Auth: Resident -------------------------------
+    path("api/auth/resident/signup/", views.ResidentSignupView.as_view(), name="resident_signup"),
+    path("api/auth/resident/login/", views.ResidentLoginView.as_view(), name="resident_login"),
+
+    # ------------------ Submissions: intake → QR → claim -------------
+    path("api/submissions/intake/", views.SubmissionIntakeView.as_view(), name="submission_intake"),
+    path("api/submissions/<int:submission_id>/qr.png", views.SubmissionQRView.as_view(), name="submission_qr"),
+    path("api/submissions/claim/", views.SubmissionClaimView.as_view(), name="submission_claim"),
+
+    # ------------------ Staff activity -------------------------------
+    path(
+        "api/staff/<int:staff_id>/transactions/",
+        views.staff_transaction_history,
+        name="staff_transaction_history",
+    ),
+
+    # ------------------ User dashboard data --------------------------
+    path("api/user/<int:user_id>/", views.get_user_details, name="get_user_details"),
+
+    # ------------------ Rewards (Reloadly) ---------------------------
+    path("api/rewards/redeem/", views.RedeemRewardView.as_view(), name="redeem_reward"),
+    path("webhooks/reloadly/", views.reloadly_webhook, name="reloadly_webhook"),
+
+    path("api/utils/normalize-phone/", views.normalize_phone_ph, name="normalize_phone_ph"),
+
+
+    # ------------------ DIY Tutorials (API) ---------------------------
+    path("api/diy/daily/", views.api_diy_daily, name="api_diy_daily"),   # <- matches template
+    path("api/diy/daily/alias/", views.diy_daily, name="diy_daily"),     # optional back-compat alias
+
+    path("api/diy/feature/", views.diy_feature_today, name="diy_feature_today"),
+    path("api/diy/create/", views.diy_create_tutorial, name="diy_create_tutorial"),
+    path("api/diy/<int:tutorial_id>/update/", views.diy_update_tutorial, name="diy_update_tutorial"),
+    path("api/diy/<int:tutorial_id>/delete/", views.diy_delete_tutorial, name="diy_delete_tutorial"),
+
+    path("api/diy/submit/", views.DIYSubmitView.as_view(), name="diy_submit"),
+
+    # ------------------ DIY Tutorials (server-rendered) ---------------
+    path("diy/", views.diy_dashboard, name="diy_dashboard"),
+
+
+
+    # ------------------ Legacy aliases (optional) --------------------
+    path("api/staff-signup/", views.StaffSignupView.as_view(), name="legacy_staff_signup"),
+    path("api/staff-login/", views.StaffLoginView.as_view(), name="legacy_staff_login"),
+    path("api/user-signup/", views.ResidentSignupView.as_view(), name="legacy_resident_signup"),
+    path("api/user-login/", views.ResidentLoginView.as_view(), name="legacy_resident_login"),
+    path("api/redeem-reward/", views.RedeemRewardView.as_view(), name="legacy_redeem_reward"),
 ]
