@@ -90,14 +90,75 @@ def today_ph():
     return timezone.localdate()  # TIME_ZONE="Asia/Manila"
 
 
+# views.py (replace your current ensure_unique_username with this)
+
+import re
+USERNAME_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_]{2,19}$')
+
 def ensure_unique_username(base_username: str) -> str:
-    base = (base_username or "").strip() or "user"
-    candidate = base
+    """
+    Normalize a desired username to pass the model validator and be unique (case-insensitive).
+    Rules: start with a letter; [A-Za-z0-9_]; length 3–20. If not valid, coerce.
+    """
+    base = (base_username or "").strip()
+    if not base:
+        base = "user"
+
+    # normalize: lowercase, replace invalid chars with '_'
+    norm = re.sub(r'[^A-Za-z0-9_]', '_', base)
+    # must start with a letter
+    if not norm[0].isalpha():
+        norm = f"u{norm}"
+    # clamp length: keep within 3–20 by trimming the tail
+    if len(norm) < 3:
+        norm = (norm + "___")[:3]
+    if len(norm) > 20:
+        norm = norm[:20]
+
+    # if somehow still not matching (edge case), fall back to 'user'
+    if not USERNAME_RE.match(norm):
+        norm = "user"
+
+    candidate = norm
     i = 1
     while User.objects.filter(username__iexact=candidate).exists():
+        # keep the base ≤18 chars so we can append a number and stay ≤20
+        trimmed = norm[:18]
+        candidate = f"{trimmed}{i}"
         i += 1
-        candidate = f"{base}{i}"
     return candidate
+
+
+# views.py (add)
+
+@api_view(["GET"])
+@permission_classes([permissions.AllowAny])
+def list_barangays(request):
+    """
+    GET /api/barangays/
+    → {"success": true, "barangays": [{"id": 1, "name": "...", "city": "Tacloban City"}, ...]}
+    """
+    qs = Barangay.objects.all().order_by("name")
+    data = [{"id": b.id, "name": b.name, "city": b.city} for b in qs]
+    return Response({"success": True, "barangays": data})
+
+@api_view(["GET"])
+@permission_classes([permissions.AllowAny])
+def username_available(request):
+    """
+    GET /api/utils/username-available/?username=foo
+    -> {"success": true, "available": true|false, "suggestion": "foo1"}
+    """
+    desired = (request.GET.get("username") or "").strip()
+    if not desired:
+        return Response({"success": False, "error": "Missing username."}, status=400)
+
+    exists = User.objects.filter(username__iexact=desired).exists()
+    suggestion = None
+    if exists:
+        suggestion = ensure_unique_username(desired)
+
+    return Response({"success": True, "available": not exists, "suggestion": suggestion})
 
 
 def _render_bullets_or_paragraph(text: str) -> str:

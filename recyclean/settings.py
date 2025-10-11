@@ -73,7 +73,7 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
         "NAME": os.getenv("DB_NAME", "capstone_db"),
-        "USER": os.getenv("DB_USER", "postgres"),
+        "USER": os.getenv("DB_USER", "postgres"),   
         "PASSWORD": os.getenv("DB_PASSWORD", ""),
         "HOST": os.getenv("DB_HOST", "localhost"),
         "PORT": os.getenv("DB_PORT", "5432"),
@@ -93,6 +93,14 @@ AUTH_PASSWORD_VALIDATORS = [
 REST_FRAMEWORK = {
     # Tighten per-view; you can switch to Token/JWT later for mobile
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.AllowAny",),
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "10/min",   # unauthenticated (covers login endpoints)
+        "user": "60/min",
+    },
 }
 
 # -----------------------------------------------------------------------------

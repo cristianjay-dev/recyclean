@@ -5,8 +5,9 @@ import secrets  # NEW: for QR token generator
 
 from django.db import models
 from django.conf import settings
-from django.core.validators import MinValueValidator
+from django.core.validators import MinValueValidator, RegexValidator
 from django.contrib.auth.models import AbstractUser
+from django.db.models.functions import Lower
 
 
 # =============================================================
@@ -38,6 +39,13 @@ class Barangay(models.Model):
         return f"{self.name}, {self.city}"
 
 
+# ---- Username validation (3–20, start letter, letters/digits/_ only) ----
+username_validator = RegexValidator(
+    regex=r'^[A-Za-z][A-Za-z0-9_]{2,19}$',
+    message="Username must start with a letter and contain only letters, numbers, or underscores (3–20 chars).",
+)
+
+
 class User(AbstractUser):
     """
     Custom user model.
@@ -45,6 +53,15 @@ class User(AbstractUser):
     - Staff accounts are approved via StaffApprovalRequest.
     - Residents are active immediately on signup.
     """
+
+    # Override AbstractUser.username to enforce our rules (and shorter length)
+    username = models.CharField(
+        max_length=20,
+        unique=True,
+        validators=[username_validator],
+        help_text="3–20 chars; start with a letter; letters, numbers, and underscores only.",
+    )
+
     mobile_number = models.CharField(max_length=20, unique=True, null=True, blank=True)
     barangay = models.ForeignKey(Barangay, on_delete=models.SET_NULL, null=True, blank=True, related_name="users")
 
@@ -65,6 +82,13 @@ class User(AbstractUser):
             models.Index(fields=["username"]),
             models.Index(fields=["email"]),
             models.Index(fields=["mobile_number"]),
+        ]
+        # Case-insensitive uniqueness at DB level
+        constraints = [
+            models.UniqueConstraint(
+                Lower("username"),
+                name="uniq_users_username_ci",
+            ),
         ]
 
     def __str__(self) -> str:
