@@ -171,7 +171,10 @@ DIY_ADMIN_BYPASS = os.getenv("DIY_ADMIN_BYPASS", "false").lower() == "true"
 
 
 # DIY daily selection behavior (optionally configure via .env)
-DIY_DAILY_COUNT = 3
-DIY_DAILY_STRATEGY = os.getenv("DIY_DAILY_STRATEGY", "round_robin")  # 'round_robin' or 'random'
-DIY_NO_REPEAT_DAYS = int(os.getenv("DIY_NO_REPEAT_DAYS", "5"))       # avoid repeats within N days
-DIY_ROTATION_SALT = int(os.getenv("DIY_ROTATION_SALT", "0"))         # tweak rotation start
+# DIY daily selection behavior (already there)
+DIY_DAILY_STRATEGY = os.getenv("DIY_DAILY_STRATEGY", "round_robin")
+DIY_NO_REPEAT_DAYS = int(os.getenv("DIY_NO_REPEAT_DAYS", "5"))
+DIY_ROTATION_SALT   = int(os.getenv("DIY_ROTATION_SALT", "0"))
+
+# NEW: how many tutorials to show per day
+DIY_DAILY_COUNT = int(os.getenv("DIY_DAILY_COUNT", "3"))
