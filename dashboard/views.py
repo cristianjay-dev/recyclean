@@ -26,9 +26,11 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.decorators.http import require_POST
 from rest_framework import permissions, serializers, views
-from rest_framework.decorators import api_view, permission_classes, parser_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes, authentication_classes
+
 from rest_framework.parsers import JSONParser, MultiPartParser
 from rest_framework.response import Response
+from urllib.parse import urlparse, parse_qs
 
 from .forms import DIYTutorialForm
 from .models import (
@@ -140,7 +142,7 @@ def list_barangays(request):
     """
     qs = Barangay.objects.all().order_by("name")
     data = [{"id": b.id, "name": b.name, "city": b.city} for b in qs]
-    return Response({"success": True, "barangays": data})
+    return Response({"success": True, "barangays": data, "items": data})
 
 @api_view(["GET"])
 @permission_classes([permissions.AllowAny])
@@ -425,73 +427,169 @@ def diy_dashboard(request):
     return render(request, "diy_dashboard.html", {"form": form, "tutorials": tutorials})
 
 
+# views.py
+from rest_framework.authentication import TokenAuthentication, SessionAuthentication, BasicAuthentication
+from itertools import islice
+
+DAILY_COUNT_DEFAULT = getattr(settings, "DIY_DAILY_COUNT", 3)
+
+def _abs_or_none(request, f):
+    return request.build_absolute_uri(f.url) if f else None
+
 @api_view(["GET"])
 @permission_classes([permissions.AllowAny])
+@authentication_classes([TokenAuthentication, SessionAuthentication, BasicAuthentication])
 def api_diy_daily(request):
     date_val = today_ph()
+    desired_count = int(request.GET.get("count") or DAILY_COUNT_DEFAULT)
 
-    existing = DIYDailySelection.objects.filter(date=date_val).select_related("tutorial").first()
-    if existing:
-        t = existing.tutorial
+    # 1) If already picked today, return them (idempotent)
+    existing = (
+        DIYDailySelection.objects
+        .filter(date=date_val)
+        .select_related("tutorial")
+        .order_by("id")
+    )
+
+    if existing.count() >= desired_count:
+        tutorials = [e.tutorial for e in existing[:desired_count]]
         return Response({
             "date": str(date_val),
-            "tutorial": {
-                "id": t.id,
-                "title": t.title,
-                "description": t.description,
-                "description_html": _render_bullets_or_paragraph(t.description),
-                "video_url": t.video_url,
-                "thumbnail": t.thumbnail.url if t.thumbnail else None,
-                "points_on_submit": t.points_on_submit,
-            },
+            "tutorials": [
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "description": t.description,
+                    "description_html": _render_bullets_or_paragraph(t.description),
+                    "video_url": t.video_url,
+                    "thumbnail": _abs_or_none(request, t.thumbnail),
+                    "points_on_submit": t.points_on_submit,
+                    "has_submitted": (
+                        request.user.is_authenticated
+                        and DIYSubmission.objects.filter(user=request.user, tutorial=t).exists()
+                    ),
+                }
+                for t in tutorials
+            ],
         })
 
+    # 2) Build/refresh the pool for today if needed
     pool, created = DIYDailyPool.objects.get_or_create(date=date_val)
     if created:
         active = DIYTutorial.objects.filter(is_active=True)
         pool.tutorials.set(active)
 
-    no_repeat_days = getattr(settings, "DIY_NO_REPEAT_DAYS", 5)
+    # Recent-repeat window
+    no_repeat_days = int(getattr(settings, "DIY_NO_REPEAT_DAYS", 5))
     window_start = date_val - timedelta(days=max(no_repeat_days - 1, 0))
-    recent_ids = list(
-        DIYDailySelection.objects.filter(date__gte=window_start)
+    recent_ids = set(
+        DIYDailySelection.objects
+        .filter(date__gte=window_start)
         .values_list("tutorial_id", flat=True)
         .distinct()
     )
 
-    candidates = pool.tutorials.filter(is_active=True).exclude(id__in=recent_ids)
-    if not candidates.exists():
-        candidates = pool.tutorials.filter(is_active=True)
+    # Candidates (try excluding recent first)
+    base_qs = pool.tutorials.filter(is_active=True)
+    candidates_excl = list(base_qs.exclude(id__in=recent_ids).order_by("id").values_list("id", flat=True))
+    candidates_all = list(base_qs.order_by("id").values_list("id", flat=True))
 
-    if not candidates.exists():
-        return Response(status=204)
-
-    strategy = getattr(settings, "DIY_DAILY_STRATEGY", "round_robin").lower()
-    if strategy == "round_robin":
-        salt = int(getattr(settings, "DIY_ROTATION_SALT", 0))
-        ids = list(candidates.order_by("id").values_list("id", flat=True))
-        tutorial = DIYTutorial.objects.get(id=ids[(date_val.toordinal() + salt) % len(ids)])
+    # 3) Round-robin start index
+    if candidates_excl:
+        ids = candidates_excl
     else:
-        tutorial = candidates.order_by("?").first()
+        ids = candidates_all
 
-    DIYDailySelection.objects.update_or_create(
-        date=date_val,
-        defaults={"tutorial": tutorial, "pool": pool},
-    )
+    if not ids:
+        return Response(status=204)  # No tutorials at all
 
-    t = tutorial
+    salt = int(getattr(settings, "DIY_ROTATION_SALT", 0))
+    start_idx = (date_val.toordinal() + salt) % len(ids)
+
+    # 4) Build today's set (no duplicates, wrap-around)
+    picked_ids_today = set(existing.values_list("tutorial_id", flat=True))
+    todays_ids = []
+    i = 0
+    while len(todays_ids) < desired_count and i < len(ids) * 2:  # safety bound
+        tid = ids[(start_idx + i) % len(ids)]
+        if tid not in todays_ids and tid not in picked_ids_today:
+            todays_ids.append(tid)
+        i += 1
+
+    # If we still don't have enough (tiny pool), fill from remaining active (even recent)
+    if len(todays_ids) < desired_count:
+        for tid in candidates_all:
+            if len(todays_ids) >= desired_count:
+                break
+            if tid not in todays_ids and tid not in picked_ids_today:
+                todays_ids.append(tid)
+
+    # Persist selections (idempotent)
+    for tid in todays_ids:
+        DIYDailySelection.objects.get_or_create(
+            date=date_val,
+            tutorial_id=tid,
+            defaults={"pool": pool},
+        )
+
+    # Requery final selections for today (ensures consistency)
+    final = (
+        DIYDailySelection.objects
+        .filter(date=date_val)
+        .select_related("tutorial")
+        .order_by("id")
+    )[:desired_count]
+
+    tutorials = [e.tutorial for e in final]
     return Response({
         "date": str(date_val),
-        "tutorial": {
-            "id": t.id,
-            "title": t.title,
-            "description": t.description,
-            "description_html": _render_bullets_or_paragraph(t.description),
-            "video_url": t.video_url,
-            "thumbnail": t.thumbnail.url if t.thumbnail else None,
-            "points_on_submit": t.points_on_submit,
-        },
+        "tutorials": [
+            {
+                "id": t.id,
+                "title": t.title,
+                "description": t.description,
+                "description_html": _render_bullets_or_paragraph(t.description),
+                "video_url": t.video_url,
+                "thumbnail": _abs_or_none(request, t.thumbnail) or _youtube_thumb(t.video_url),
+                "points_on_submit": t.points_on_submit,
+                "has_submitted": (
+                    request.user.is_authenticated
+                    and DIYSubmission.objects.filter(user=request.user, tutorial=t).exists()
+                ),
+            }
+            for t in tutorials
+        ],
     })
+
+# --- helpers near your other utils ---
+
+
+def _abs_or_none(request, f):  # already suggested earlier
+    return request.build_absolute_uri(f.url) if f else None
+
+def _youtube_id(url: str) -> str | None:
+    try:
+        p = urlparse(url)
+        if p.netloc in {"youtu.be"}:
+            # https://youtu.be/<id>
+            return p.path.lstrip("/") or None
+        if "youtube.com" in p.netloc:
+            if p.path == "/watch":
+                return (parse_qs(p.query).get("v") or [None])[0]
+            # /embed/<id> or /shorts/<id> or /v/<id>
+            parts = p.path.strip("/").split("/")
+            if parts and parts[0] in {"embed", "shorts", "v"} and len(parts) > 1:
+                return parts[1]
+        return None
+    except Exception:
+        return None
+
+def _youtube_thumb(url: str) -> str | None:
+    vid = _youtube_id(url or "")
+    if not vid:
+        return None
+    # 'maxresdefault.jpg' sometimes 404s; 'hqdefault.jpg' is reliable
+    return f"https://img.youtube.com/vi/{vid}/hqdefault.jpg"
 
 
 # Back-compat alias

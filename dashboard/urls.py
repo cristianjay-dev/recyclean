@@ -38,6 +38,7 @@ urlpatterns = [
     path("api/auth/staff/reject/<int:user_id>/", views.RejectStaffView.as_view(), name="reject_staff"),
     path("api/utils/username-available/", views.username_available, name="username_available"),
     path("api/barangays/", views.list_barangays, name="list_barangays"),
+    path("api/geo/barangays/", views.list_barangays, name="list_barangays_legacy"),
 
     # ------------------ Auth: Resident -------------------------------
     path("api/auth/resident/signup/", views.ResidentSignupView.as_view(), name="resident_signup"),

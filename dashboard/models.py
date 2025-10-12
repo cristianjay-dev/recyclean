@@ -338,9 +338,10 @@ class DIYDailyPool(models.Model):
         return f"DIY Pool for {self.date}"
 
 
+# models.py
 class DIYDailySelection(models.Model):
-    """The single tutorial selected (randomly or round-robin) for a given date."""
-    date = models.DateField(unique=True)
+    """The tutorials selected for a given date (now supports multiple per day)."""
+    date = models.DateField(db_index=True)  # was unique=True
     pool = models.ForeignKey(DIYDailyPool, on_delete=models.CASCADE, null=True, blank=True, related_name="selections")
     tutorial = models.ForeignKey(DIYTutorial, on_delete=models.PROTECT, related_name="daily_selections")
     selected_at = models.DateTimeField(auto_now_add=True)
@@ -348,9 +349,13 @@ class DIYDailySelection(models.Model):
     class Meta:
         db_table = "diy_daily_selections"
         ordering = ["-date"]
+        constraints = [
+            models.UniqueConstraint(fields=["date", "tutorial"], name="uniq_daily_tutorial"),
+        ]
 
     def __str__(self) -> str:
         return f"DIYDailySelection({self.date}: {self.tutorial})"
+
 
 
 class DIYSubmission(models.Model):
@@ -367,8 +372,10 @@ class DIYSubmission(models.Model):
 
     class Meta:
         db_table = "diy_submissions"
-        unique_together = ("user", "tutorial")
         ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["user", "tutorial"], name="uniq_user_tutorial"),
+        ]
 
     def __str__(self) -> str:
         return f"DIYSubmission by {self.user_id} on {self.tutorial_id}"
