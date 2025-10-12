@@ -1,4 +1,7 @@
 from django.urls import path
+from django.http import HttpResponse
+from django.conf import settings
+from django.conf.urls.static import static
 from . import views
 
 urlpatterns = [
@@ -12,20 +15,13 @@ urlpatterns = [
     # ------------------ Drop-off Sites (server-rendered) -------------
     path("dropoff-sites/", views.dropoff_sites_view, name="dropoff_sites_view"),
     path("dropoff-sites/<int:site_id>/", views.dropoff_site_detail, name="dropoff_site_detail"),
-    path(
-        "dropoff-sites/<int:site_id>/submissions/",
-        views.submissions_by_dropoff_site,
-        name="submissions_by_dropoff_site",
-    ),
+    path("dropoff-sites/<int:site_id>/submissions/", views.submissions_by_dropoff_site, name="submissions_by_dropoff_site"),
+
     # CSV exports
     path("exports/submissions.csv", views.export_all_submissions_csv, name="export_all_submissions_csv"),
+    path("dropoff-sites/<int:site_id>/export.csv", views.export_site_submissions_csv, name="export_site_submissions_csv"),
 
-    path(
-        "dropoff-sites/<int:site_id>/export.csv",
-        views.export_site_submissions_csv,
-        name="export_site_submissions_csv",
-    ),
-    # Delete site (used by your template's fetch to /delete-dropoff-site/<id>/)
+    # Delete site
     path("delete-dropoff-site/<int:site_id>/", views.delete_dropoff_site, name="delete_dropoff_site"),
 
     # ------------------ Staff Management (server-rendered) -----------
@@ -36,9 +32,14 @@ urlpatterns = [
     path("api/auth/staff/login/", views.StaffLoginView.as_view(), name="staff_login"),
     path("api/auth/staff/approve/<int:user_id>/", views.ApproveStaffView.as_view(), name="approve_staff"),
     path("api/auth/staff/reject/<int:user_id>/", views.RejectStaffView.as_view(), name="reject_staff"),
+
     path("api/utils/username-available/", views.username_available, name="username_available"),
+
+    # Barangays (support both with and without trailing slash + legacy alias)
     path("api/barangays/", views.list_barangays, name="list_barangays"),
+    path("api/barangays", views.list_barangays, name="list_barangays_noslash"),
     path("api/geo/barangays/", views.list_barangays, name="list_barangays_legacy"),
+    path("api/geo/barangays", views.list_barangays, name="list_barangays_legacy_noslash"),
 
     # ------------------ Auth: Resident -------------------------------
     path("api/auth/resident/signup/", views.ResidentSignupView.as_view(), name="resident_signup"),
@@ -50,11 +51,7 @@ urlpatterns = [
     path("api/submissions/claim/", views.SubmissionClaimView.as_view(), name="submission_claim"),
 
     # ------------------ Staff activity -------------------------------
-    path(
-        "api/staff/<int:staff_id>/transactions/",
-        views.staff_transaction_history,
-        name="staff_transaction_history",
-    ),
+    path("api/staff/<int:staff_id>/transactions/", views.staff_transaction_history, name="staff_transaction_history"),
 
     # ------------------ User dashboard data --------------------------
     path("api/user/<int:user_id>/", views.get_user_details, name="get_user_details"),
@@ -65,22 +62,21 @@ urlpatterns = [
 
     path("api/utils/normalize-phone/", views.normalize_phone_ph, name="normalize_phone_ph"),
 
-
-    # ------------------ DIY Tutorials (API) ---------------------------
-    path("api/diy/daily/", views.api_diy_daily, name="api_diy_daily"),   # <- matches template
-    path("api/diy/daily/alias/", views.diy_daily, name="diy_daily"),     # optional back-compat alias
+    # ------------------ DIY Tutorials (API) --------------------------
+    # Support with/without slash + back-compat alias
+    path("api/diy/daily/", views.api_diy_daily, name="api_diy_daily"),
+    path("api/diy/daily", views.api_diy_daily, name="api_diy_daily_noslash"),
+    path("api/diy/daily/alias/", views.diy_daily, name="diy_daily"),
+    path("api/diy/daily/alias", views.diy_daily, name="diy_daily_noslash"),
 
     path("api/diy/feature/", views.diy_feature_today, name="diy_feature_today"),
     path("api/diy/create/", views.diy_create_tutorial, name="diy_create_tutorial"),
     path("api/diy/<int:tutorial_id>/update/", views.diy_update_tutorial, name="diy_update_tutorial"),
     path("api/diy/<int:tutorial_id>/delete/", views.diy_delete_tutorial, name="diy_delete_tutorial"),
-
     path("api/diy/submit/", views.DIYSubmitView.as_view(), name="diy_submit"),
 
-    # ------------------ DIY Tutorials (server-rendered) ---------------
+    # ------------------ DIY Tutorials (server-rendered) --------------
     path("diy/", views.diy_dashboard, name="diy_dashboard"),
-
-
 
     # ------------------ Legacy aliases (optional) --------------------
     path("api/staff-signup/", views.StaffSignupView.as_view(), name="legacy_staff_signup"),
@@ -88,4 +84,7 @@ urlpatterns = [
     path("api/user-signup/", views.ResidentSignupView.as_view(), name="legacy_resident_signup"),
     path("api/user-login/", views.ResidentLoginView.as_view(), name="legacy_resident_login"),
     path("api/redeem-reward/", views.RedeemRewardView.as_view(), name="legacy_redeem_reward"),
+
+    # Simple health check (useful for connectivity tests)
+    path("health/", lambda r: HttpResponse("ok"), name="health"),
 ]

@@ -462,7 +462,8 @@ def api_diy_daily(request):
                     "description": t.description,
                     "description_html": _render_bullets_or_paragraph(t.description),
                     "video_url": t.video_url,
-                    "thumbnail": _abs_or_none(request, t.thumbnail),
+                    # inside api_diy_daily(), in the early return block
+                    "thumbnail": _abs_or_none(request, t.thumbnail) or _youtube_thumb(t.video_url),
                     "points_on_submit": t.points_on_submit,
                     "has_submitted": (
                         request.user.is_authenticated
@@ -617,9 +618,10 @@ def diy_feature_today(request):
         pool, _ = DIYDailyPool.objects.get_or_create(date=picked_date)
         pool.tutorials.add(tutorial)
 
-        DIYDailySelection.objects.update_or_create(
+        DIYDailySelection.objects.get_or_create(
             date=picked_date,
-            defaults={"tutorial": tutorial, "pool": pool},
+            tutorial=tutorial,
+            defaults={"pool": pool},
         )
         return JsonResponse({"success": True})
     except Exception as e:
