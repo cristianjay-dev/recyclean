@@ -27,10 +27,13 @@ from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.decorators.http import require_POST
 from rest_framework import permissions, serializers, views
 from rest_framework.decorators import api_view, permission_classes, parser_classes, authentication_classes
+from rest_framework.authtoken.models import Token
+from rest_framework.authentication import TokenAuthentication
 
 from rest_framework.parsers import JSONParser, MultiPartParser
 from rest_framework.response import Response
 from urllib.parse import urlparse, parse_qs
+
 
 from .forms import DIYTutorialForm
 from .models import (
@@ -737,24 +740,29 @@ def diy_delete_tutorial(request, tutorial_id: int):
     that reference it and re-seed those dates to keep the daily count.
     Also removes the tutorial from all daily pools before deleting it.
     """
-    t = get_object_or_404(DIYTutorial, pk=tutorial_id)
+    with transaction.atomic():
+        t = get_object_or_404(DIYTutorial, pk=tutorial_id)
 
-    # Find all dates where this tutorial was featured
-    affected_selections = DIYDailySelection.objects.filter(tutorial=t)
-    affected_dates = sorted({s.date for s in affected_selections})
+        # Collect all dates where this tutorial was featured
+        affected_dates = list(
+            DIYDailySelection.objects
+            .filter(tutorial=t)
+            .values_list("date", flat=True)
+            .distinct()
+        )
+        affected_dates.sort()
 
-    # Remove from all pools to avoid dangling M2M references
-    DIYDailyPool.objects.filter(tutorials=t).update()  # no-op just to have queryset
-    for pool in DIYDailyPool.objects.filter(tutorials=t):
-        pool.tutorials.remove(t)
+        # Remove from all pools (M2M) to avoid dangling references
+        for pool in DIYDailyPool.objects.filter(tutorials=t):
+            pool.tutorials.remove(t)
 
-    # Delete the selections that reference this tutorial (needed because on_delete=PROTECT)
-    DIYDailySelection.objects.filter(tutorial=t).delete()
+        # Remove any selections referring to this tutorial
+        DIYDailySelection.objects.filter(tutorial=t).delete()
 
-    # Now it's safe to delete the tutorial (DIYSubmission has CASCADE in your models)
-    t.delete()
+        # Now delete the tutorial itself
+        t.delete()
 
-    # Re-seed all affected dates to maintain the daily count
+    # Re-seed affected dates outside the transaction (or inside, both are fine)
     desired_count = int(getattr(settings, "DIY_DAILY_COUNT", 3))
     for d in affected_dates:
         _reseed_for_date(d, request=request, desired_count=desired_count)
@@ -763,8 +771,10 @@ def diy_delete_tutorial(request, tutorial_id: int):
 
 
 
+
 # ---- DIY submission (mobile/user uploads proof) ----
 class DIYSubmitView(views.APIView):
+    authentication_classes = [TokenAuthentication]
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser]
 
@@ -1030,9 +1040,11 @@ class StaffLoginView(views.APIView):
 
         user.groups.add(get_or_create_group("staff"))
 
+        token, _ = Token.objects.get_or_create(user=user)
         return Response({
             "success": True,
             "message": "Login successful.",
+            "token": token.key,
             "user": {
                 "id": user.id,
                 "name": user.get_full_name(),
@@ -1143,9 +1155,11 @@ class ResidentLoginView(views.APIView):
 
         user.groups.add(get_or_create_group("resident"))
 
+        token, _ = Token.objects.get_or_create(user=user)
         return Response({
             "success": True,
             "message": "Login successful.",
+            "token": token.key,
             "user": {
                 "id": user.id,
                 "name": user.get_full_name(),

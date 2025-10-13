@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "dashboard",
     "rest_framework",
+    "rest_framework.authtoken",
     "corsheaders",
 ]
 
@@ -101,6 +102,10 @@ REST_FRAMEWORK = {
         "anon": "10/min",   # unauthenticated (covers login endpoints)
         "user": "60/min",
     },
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework.authentication.SessionAuthentication",
+        "rest_framework.authentication.TokenAuthentication",
+    ),
 }
 
 # -----------------------------------------------------------------------------
