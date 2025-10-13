@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import secrets
+import re
 from datetime import datetime, timedelta, date
 from functools import wraps
 from typing import List, Dict, Tuple
@@ -89,6 +90,67 @@ def compute_points(bottle_data: List[Dict]) -> int:
         if size in size_points and count >= 0:
             total += size_points[size] * count
     return total
+
+# Put near your other utils in views.py
+
+
+_URL_RE = re.compile(r'(https?://[^\s<>"\']+)', re.IGNORECASE)
+_BULLET_RE = re.compile(r'^\s*[-*•]\s+')
+_NUMBER_RE = re.compile(r'^\s*\d+[.)]\s+')
+
+def _linkify_escaped_text(s: str) -> str:
+    """
+    Given an already-escaped string, wrap URLs with <a href="...">...</a>.
+    """
+    def _wrap(m):
+        url = m.group(1)
+        return f'<a href="{url}" target="_blank" rel="noopener">{url}</a>'
+    return _URL_RE.sub(_wrap, s)
+
+def _render_bullets_or_paragraph(text: str) -> str:
+    """
+    Block-aware formatter:
+    - Blank-line separated blocks become separate lists/paragraphs
+    - Lines starting with -, *, • → <ul>
+    - Lines starting with 1. / 2) … → <ol>
+    - Otherwise keep line breaks as <br/>
+    - Always HTML-escape, then linkify URLs
+    """
+    text = (text or "").strip()
+    if not text:
+        return ""
+
+    html_parts = []
+    # Split into blocks by blank lines to preserve paragraphs
+    blocks = [b for b in re.split(r'\r?\n\s*\r?\n', text) if b.strip()]
+
+    for block in blocks:
+        lines = [ln.rstrip() for ln in block.splitlines() if ln.strip()]
+        has_bullets = any(_BULLET_RE.match(ln) for ln in lines)
+        has_numbers = any(_NUMBER_RE.match(ln) for ln in lines)
+
+        if has_numbers and not has_bullets:
+            items = []
+            for ln in lines:
+                clean = _NUMBER_RE.sub('', ln, count=1).strip()
+                esc = escape(clean)
+                items.append(f"<li>{_linkify_escaped_text(esc)}</li>")
+            html_parts.append(f"<ol>{''.join(items)}</ol>")
+        elif has_bullets:
+            items = []
+            for ln in lines:
+                clean = _BULLET_RE.sub('', ln, count=1).strip()
+                esc = escape(clean)
+                items.append(f"<li>{_linkify_escaped_text(esc)}</li>")
+            html_parts.append(f"<ul>{''.join(items)}</ul>")
+        else:
+            # Plain paragraph: keep line breaks
+            esc = escape(block)
+            esc = _linkify_escaped_text(esc)
+            esc = esc.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br/>")
+            html_parts.append(f"<p>{esc}</p>")
+
+    return "".join(html_parts)
 
 
 def today_ph():
