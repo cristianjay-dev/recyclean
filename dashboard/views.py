@@ -443,7 +443,13 @@ def api_diy_daily(request):
     date_val = today_ph()
     desired_count = int(request.GET.get("count") or DAILY_COUNT_DEFAULT)
 
-    # 1) If already picked today, return them (idempotent)
+    # NEW: allow ?refresh=1 (or true/yes) to re-pick for today
+    refresh = str(request.GET.get("refresh", "0")).lower() in {"1", "true", "yes"}
+
+    # If refreshing, clear today's selections so we can repopulate
+    if refresh:
+        DIYDailySelection.objects.filter(date=date_val).delete()
+
     existing = (
         DIYDailySelection.objects
         .filter(date=date_val)
@@ -451,7 +457,8 @@ def api_diy_daily(request):
         .order_by("id")
     )
 
-    if existing.count() >= desired_count:
+    # Only return early if we already have enough and we're NOT refreshing
+    if not refresh and existing.count() >= desired_count:
         tutorials = [e.tutorial for e in existing[:desired_count]]
         return Response({
             "date": str(date_val),
@@ -462,7 +469,7 @@ def api_diy_daily(request):
                     "description": t.description,
                     "description_html": _render_bullets_or_paragraph(t.description),
                     "video_url": t.video_url,
-                    "thumbnail": _abs_or_none(request, t.thumbnail),
+                    "thumbnail": _abs_or_none(request, t.thumbnail) or _youtube_thumb(t.video_url),
                     "points_on_submit": t.points_on_submit,
                     "has_submitted": (
                         request.user.is_authenticated
@@ -473,12 +480,17 @@ def api_diy_daily(request):
             ],
         })
 
-    # 2) Build/refresh the pool for today if needed
-    pool, created = DIYDailyPool.objects.get_or_create(date=date_val)
-    if created:
-        active = DIYTutorial.objects.filter(is_active=True)
-        pool.tutorials.set(active)
+    # Build/refresh the pool for today
+    pool, _ = DIYDailyPool.objects.get_or_create(date=date_val)
 
+    # NEW: keep today's pool in sync with ALL active tutorials
+    active_ids = set(DIYTutorial.objects.filter(is_active=True).values_list("id", flat=True))
+    pool_ids = set(pool.tutorials.values_list("id", flat=True))
+    missing_ids = active_ids - pool_ids
+    if missing_ids:
+        pool.tutorials.add(*missing_ids)
+
+    # ---- the rest of your function stays the same from here ----
     # Recent-repeat window
     no_repeat_days = int(getattr(settings, "DIY_NO_REPEAT_DAYS", 5))
     window_start = date_val - timedelta(days=max(no_repeat_days - 1, 0))
@@ -489,34 +501,30 @@ def api_diy_daily(request):
         .distinct()
     )
 
-    # Candidates (try excluding recent first)
     base_qs = pool.tutorials.filter(is_active=True)
     candidates_excl = list(base_qs.exclude(id__in=recent_ids).order_by("id").values_list("id", flat=True))
     candidates_all = list(base_qs.order_by("id").values_list("id", flat=True))
 
-    # 3) Round-robin start index
     if candidates_excl:
         ids = candidates_excl
     else:
         ids = candidates_all
 
     if not ids:
-        return Response(status=204)  # No tutorials at all
+        return Response(status=204)
 
     salt = int(getattr(settings, "DIY_ROTATION_SALT", 0))
     start_idx = (date_val.toordinal() + salt) % len(ids)
 
-    # 4) Build today's set (no duplicates, wrap-around)
     picked_ids_today = set(existing.values_list("tutorial_id", flat=True))
     todays_ids = []
     i = 0
-    while len(todays_ids) < desired_count and i < len(ids) * 2:  # safety bound
+    while len(todays_ids) < desired_count and i < len(ids) * 2:
         tid = ids[(start_idx + i) % len(ids)]
         if tid not in todays_ids and tid not in picked_ids_today:
             todays_ids.append(tid)
         i += 1
 
-    # If we still don't have enough (tiny pool), fill from remaining active (even recent)
     if len(todays_ids) < desired_count:
         for tid in candidates_all:
             if len(todays_ids) >= desired_count:
@@ -524,7 +532,6 @@ def api_diy_daily(request):
             if tid not in todays_ids and tid not in picked_ids_today:
                 todays_ids.append(tid)
 
-    # Persist selections (idempotent)
     for tid in todays_ids:
         DIYDailySelection.objects.get_or_create(
             date=date_val,
@@ -532,7 +539,6 @@ def api_diy_daily(request):
             defaults={"pool": pool},
         )
 
-    # Requery final selections for today (ensures consistency)
     final = (
         DIYDailySelection.objects
         .filter(date=date_val)
@@ -561,8 +567,82 @@ def api_diy_daily(request):
         ],
     })
 
+
 # --- helpers near your other utils ---
 
+# Re-seed a specific date after a featured tutorial was removed/deleted.
+def _reseed_for_date(date_val, request=None, desired_count=None):
+    if desired_count is None:
+        desired_count = int(getattr(settings, "DIY_DAILY_COUNT", 3))
+
+    # Ensure a pool exists for that day
+    pool, _ = DIYDailyPool.objects.get_or_create(date=date_val)
+
+    # Keep the pool in sync with *current* active tutorials:
+    active_ids = set(DIYTutorial.objects.filter(is_active=True).values_list("id", flat=True))
+    pool_ids = set(pool.tutorials.values_list("id", flat=True))
+    to_add = active_ids - pool_ids
+    to_remove = pool_ids - active_ids
+    if to_add:
+        pool.tutorials.add(*to_add)
+    if to_remove:
+        pool.tutorials.remove(*to_remove)
+
+    # Already-selected (after we may have deleted some)
+    existing = (
+        DIYDailySelection.objects
+        .filter(date=date_val)
+        .select_related("tutorial")
+        .order_by("id")
+    )
+    if existing.count() >= desired_count:
+        return  # nothing to do
+
+    # Recent-repeat window relative to that date
+    no_repeat_days = int(getattr(settings, "DIY_NO_REPEAT_DAYS", 5))
+    window_start = date_val - timedelta(days=max(no_repeat_days - 1, 0))
+    recent_ids = set(
+        DIYDailySelection.objects
+        .filter(date__gte=window_start)
+        .values_list("tutorial_id", flat=True)
+        .distinct()
+    )
+
+    base_qs = pool.tutorials.filter(is_active=True)
+    candidates_excl = list(
+        base_qs.exclude(id__in=recent_ids).order_by("id").values_list("id", flat=True)
+    )
+    candidates_all = list(base_qs.order_by("id").values_list("id", flat=True))
+
+    ids = candidates_excl if candidates_excl else candidates_all
+    if not ids:
+        return  # nothing available to seed
+
+    salt = int(getattr(settings, "DIY_ROTATION_SALT", 0))
+    start_idx = (date_val.toordinal() + salt) % len(ids)
+
+    picked_ids_today = set(existing.values_list("tutorial_id", flat=True))
+    todays_ids = []
+    i = 0
+    while len(todays_ids) < desired_count and i < len(ids) * 2:
+        tid = ids[(start_idx + i) % len(ids)]
+        if tid not in todays_ids and tid not in picked_ids_today:
+            todays_ids.append(tid)
+        i += 1
+
+    if len(todays_ids) < desired_count:
+        for tid in candidates_all:
+            if len(todays_ids) >= desired_count:
+                break
+            if tid not in todays_ids and tid not in picked_ids_today:
+                todays_ids.append(tid)
+
+    for tid in todays_ids:
+        DIYDailySelection.objects.get_or_create(
+            date=date_val,
+            tutorial_id=tid,
+            defaults={"pool": pool},
+        )
 
 def _abs_or_none(request, f):  # already suggested earlier
     return request.build_absolute_uri(f.url) if f else None
@@ -617,9 +697,10 @@ def diy_feature_today(request):
         pool, _ = DIYDailyPool.objects.get_or_create(date=picked_date)
         pool.tutorials.add(tutorial)
 
-        DIYDailySelection.objects.update_or_create(
+        DIYDailySelection.objects.get_or_create(
             date=picked_date,
-            defaults={"tutorial": tutorial, "pool": pool},
+            tutorial=tutorial,
+            defaults={"pool": pool},
         )
         return JsonResponse({"success": True})
     except Exception as e:
@@ -651,14 +732,35 @@ def diy_update_tutorial(request, tutorial_id: int):
 @require_POST
 @require_staff_json
 def diy_delete_tutorial(request, tutorial_id: int):
+    """
+    Delete a DIY tutorial even if it was featured; automatically remove the selections
+    that reference it and re-seed those dates to keep the daily count.
+    Also removes the tutorial from all daily pools before deleting it.
+    """
     t = get_object_or_404(DIYTutorial, pk=tutorial_id)
-    if DIYDailySelection.objects.filter(tutorial=t).exists():
-        return JsonResponse(
-            {"success": False, "error": "This tutorial is featured on one or more dates. Change those selections first."},
-            status=400,
-        )
+
+    # Find all dates where this tutorial was featured
+    affected_selections = DIYDailySelection.objects.filter(tutorial=t)
+    affected_dates = sorted({s.date for s in affected_selections})
+
+    # Remove from all pools to avoid dangling M2M references
+    DIYDailyPool.objects.filter(tutorials=t).update()  # no-op just to have queryset
+    for pool in DIYDailyPool.objects.filter(tutorials=t):
+        pool.tutorials.remove(t)
+
+    # Delete the selections that reference this tutorial (needed because on_delete=PROTECT)
+    DIYDailySelection.objects.filter(tutorial=t).delete()
+
+    # Now it's safe to delete the tutorial (DIYSubmission has CASCADE in your models)
     t.delete()
-    return JsonResponse({"success": True})
+
+    # Re-seed all affected dates to maintain the daily count
+    desired_count = int(getattr(settings, "DIY_DAILY_COUNT", 3))
+    for d in affected_dates:
+        _reseed_for_date(d, request=request, desired_count=desired_count)
+
+    return JsonResponse({"success": True, "reseeded_dates": [str(d) for d in affected_dates]})
+
 
 
 # ---- DIY submission (mobile/user uploads proof) ----
