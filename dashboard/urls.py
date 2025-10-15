@@ -34,6 +34,8 @@ urlpatterns = [
     path("api/auth/staff/reject/<int:user_id>/", views.RejectStaffView.as_view(), name="reject_staff"),
 
     path("api/utils/username-available/", views.username_available, name="username_available"),
+    path("api/user/<int:user_id>/history/", views.user_history, name="user_history"),
+
 
     # Barangays (support both with and without trailing slash + legacy alias)
     path("api/barangays/", views.list_barangays, name="list_barangays"),

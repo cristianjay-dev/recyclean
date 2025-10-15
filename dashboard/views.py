@@ -460,6 +460,89 @@ def normalize_phone_ph(request):
     return Response({"success": True, "phone": normalized})
 
 
+
+
+@api_view(["GET"])
+@authentication_classes([TokenAuthentication, SessionAuthentication, BasicAuthentication])
+@permission_classes([permissions.IsAuthenticated])
+def user_history(request, user_id: int):
+    """
+    GET /api/user/<id>/history/
+    Returns a single merged list (newest first) of:
+      - submission_claim (points + submission id)
+      - diy_submit (points + tutorial title when available)
+      - reward (Reloadly top-ups with status)
+    """
+    user = get_object_or_404(User, pk=user_id)
+    if user.id != request.user.id and not _admin_bypass_ok(request):
+        return Response({"success": False, "error": "Forbidden."}, status=403)
+
+    items = []
+
+    # --- Points ledger (submission claims + DIY) ---
+    for led in (
+        UserPointsLedger.objects
+        .filter(user=user)
+        .select_related("submission")
+        .order_by("-id")[:200]   # cap for performance; adjust as you like
+    ):
+        # Map source → type/label
+        src = (led.source or "").lower()
+        if src == "submission_claim":
+            item_type = "points_earned"
+            title = "QR Claim"
+            subtitle = f"+{led.delta_points} pts"
+            extra = {"submission_id": getattr(led.submission, "id", None)}
+        elif src == "diy_submit":
+            item_type = "points_earned"
+            title = "DIY Submission"
+            subtitle = f"+{led.delta_points} pts"
+            extra = {"notes": led.notes}
+        else:
+            # skip internal adjustments unless you want to show them too
+            item_type = "adjustment"
+            title = led.notes or "Points Update"
+            subtitle = f"{led.delta_points:+} pts"
+            extra = {}
+
+        items.append({
+            "type": item_type,
+            "title": title,
+            "subtitle": subtitle,
+            "points_delta": led.delta_points,
+            "balance_after": led.balance_after,
+            "status": None,
+            "amount_php": None,
+            "phone": None,
+            "ts": localtime(getattr(led, "created_at", None) or timezone.now()).isoformat(),
+            "extra": extra,
+        })
+
+    # --- Rewards (Reloadly) ---
+    for rr in RewardRequest.objects.filter(user=user).order_by("-id")[:200]:
+        items.append({
+            "type": "reward",
+            "title": f"Load to {rr.mobile_number}",
+            "subtitle": f"₱{rr.amount} • {rr.operator_name or rr.telco or ''}".strip(),
+            "points_delta": -int(rr.points_used or 0),
+            "balance_after": None,   # we don’t always adjust here (might be webhook)
+            "status": rr.status,     # requested | paid | rejected | ...
+            "amount_php": str(rr.amount or ""),
+            "phone": rr.mobile_number,
+            "ts": localtime(rr.date_requested or rr.created_at or timezone.now()).isoformat(),
+            "extra": {"reloadly_tx_id": rr.reloadly_tx_id},
+        })
+
+    # (Optional) You could also include raw Submissions or DIYSubmission rows here
+    # if you want even more detail.
+
+    # sort newest → oldest by timestamp
+    items.sort(key=lambda x: x["ts"], reverse=True)
+
+    return Response({"success": True, "items": items})
+
+
+
 # ==============================================================================
 # DIY management (server page + APIs your template uses)
 # ==============================================================================
@@ -477,6 +560,7 @@ DAILY_COUNT_DEFAULT = getattr(settings, "DIY_DAILY_COUNT", 3)
 
 def _abs_or_none(request, f):
     return request.build_absolute_uri(f.url) if f else None
+
 
 @api_view(["GET"])
 @permission_classes([permissions.AllowAny])
