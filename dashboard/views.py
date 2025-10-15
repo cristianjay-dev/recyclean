@@ -17,7 +17,7 @@ from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import Group
 from django.db import transaction
-from django.db.models import Sum, Min, Max, Q
+from django.db.models import Sum, Min, Max
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
@@ -29,11 +29,13 @@ from django.views.decorators.http import require_POST
 from rest_framework import permissions, serializers, views
 from rest_framework.decorators import api_view, permission_classes, parser_classes, authentication_classes
 from rest_framework.authtoken.models import Token
-from rest_framework.authentication import TokenAuthentication
+from rest_framework.authentication import TokenAuthentication, SessionAuthentication, BasicAuthentication
+from rest_framework.permissions import BasePermission
 
 from rest_framework.parsers import JSONParser, MultiPartParser
 from rest_framework.response import Response
 from urllib.parse import urlparse, parse_qs
+from decimal import Decimal, ROUND_HALF_UP
 
 
 from .forms import DIYTutorialForm
@@ -58,15 +60,28 @@ from .services.reloadly import (
     list_reloadly_transactions,
     send_topup,
     auto_detect_operator,
+    normalize_phone,
     ReloadlyError,
 )
 
 LOGGER = logging.getLogger(__name__)
+COUNTRY = getattr(settings, "RELOADLY_COUNTRY_CODE", "PH")
+TWO_DP = Decimal("0.01")
+
 
 
 # ==============================================================================
 # Utilities
 # ==============================================================================
+
+def php_to_points(php_amount: int) -> int:
+    rate = int(getattr(settings, "POINTS_PER_PHP", 10))
+    return int(php_amount) * rate
+
+def points_to_php_decimal(points: int) -> Decimal:
+    rate = int(getattr(settings, "POINTS_PER_PHP", 10))
+    return (Decimal(points) / Decimal(rate)).quantize(TWO_DP, rounding=ROUND_HALF_UP)
+
 
 def get_or_create_group(name: str) -> Group:
     grp, _ = Group.objects.get_or_create(name=name)
@@ -159,7 +174,7 @@ def today_ph():
 
 # views.py (replace your current ensure_unique_username with this)
 
-import re
+
 USERNAME_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_]{2,19}$')
 
 def ensure_unique_username(base_username: str) -> str:
@@ -167,31 +182,21 @@ def ensure_unique_username(base_username: str) -> str:
     Normalize a desired username to pass the model validator and be unique (case-insensitive).
     Rules: start with a letter; [A-Za-z0-9_]; length 3–20. If not valid, coerce.
     """
-    base = (base_username or "").strip()
-    if not base:
-        base = "user"
-
-    # normalize: lowercase, replace invalid chars with '_'
-    norm = re.sub(r'[^A-Za-z0-9_]', '_', base)
-    # must start with a letter
+    base = (base_username or "").strip() or "user"
+    # lowercase + replace invalid with '_'
+    norm = re.sub(r'[^A-Za-z0-9_]', '_', base).lower()
     if not norm[0].isalpha():
         norm = f"u{norm}"
-    # clamp length: keep within 3–20 by trimming the tail
     if len(norm) < 3:
         norm = (norm + "___")[:3]
     if len(norm) > 20:
         norm = norm[:20]
-
-    # if somehow still not matching (edge case), fall back to 'user'
     if not USERNAME_RE.match(norm):
         norm = "user"
-
     candidate = norm
     i = 1
     while User.objects.filter(username__iexact=candidate).exists():
-        # keep the base ≤18 chars so we can append a number and stay ≤20
-        trimmed = norm[:18]
-        candidate = f"{trimmed}{i}"
+        candidate = f"{norm[:18]}{i}"
         i += 1
     return candidate
 
@@ -228,26 +233,8 @@ def username_available(request):
     return Response({"success": True, "available": not exists, "suggestion": suggestion})
 
 
-def _render_bullets_or_paragraph(text: str) -> str:
-    """
-    Very light formatter for description:
-    - If any line starts with -, *, or • → render as a <ul><li>...</li></ul>
-    - Else wrap in <p>...</p>
-    Always HTML-escapes content.
-    """
-    text = (text or "").strip()
-    if not text:
-        return ""
-    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
-    if any(ln.lstrip().startswith(("-", "*", "•")) for ln in lines):
-        items = "".join(
-            f"<li>{escape(ln.lstrip().lstrip('-*•').strip())}</li>" for ln in lines
-        )
-        return f"<ul>{items}</ul>"
-    return f"<p>{escape(text)}</p>"
-
-
 # ---- Admin/staff guard with development + shared-key bypass ------------------
+
 
 def _admin_bypass_ok(request) -> bool:
     """
@@ -292,6 +279,17 @@ def require_staff_json(view_func):
         return view_func(request, *args, **kwargs)
     return _wrapped
 
+class IsStaffish(BasePermission):
+    def has_permission(self, request, view):
+        u = request.user
+        # allow your existing shared-key/DEBUG bypass
+        if _admin_bypass_ok(request):
+            return True
+        return bool(
+            u and u.is_authenticated and (
+                u.is_superuser or u.is_staff or u.groups.filter(name="staff").exists()
+            )
+        )
 
 # ==============================================================================
 # Serializers
@@ -452,33 +450,14 @@ def reward_requests_view(request):
 @api_view(["GET"])
 @permission_classes([permissions.AllowAny])
 def normalize_phone_ph(request):
-    """
-    GET /api/utils/normalize-phone/?phone=09171234567
-    -> {"success": true, "phone": "09xxxxxxxxx"}
-    """
     phone = request.GET.get("phone") or (getattr(request, "query_params", {}) or {}).get("phone")
     if not phone:
         return Response({"success": False, "error": "Missing phone."}, status=400)
     try:
-        normalized = _normalize_phone_ph(phone)
+        normalized = normalize_phone(phone, country_code="PH")   # <-- use shared helper
     except ReloadlyError as e:
         return Response({"success": False, "error": str(e)}, status=400)
     return Response({"success": True, "phone": normalized})
-
-
-def _normalize_phone_ph(phone: str) -> str:
-    """
-    Normalize PH mobile numbers to 11-digit local format starting with '0'.
-    Accepts '+63xxxxxxxxxx', '63xxxxxxxxxx', or '09xxxxxxxxx'.
-    """
-    digits = "".join(ch for ch in (phone or "") if ch.isdigit())
-    if digits.startswith("63"):
-        digits = "0" + digits[2:]
-    if len(digits) == 10 and digits.startswith("9"):
-        digits = "0" + digits
-    if len(digits) != 11 or not digits.startswith("0"):
-        raise ReloadlyError("Invalid PH mobile number format.")
-    return digits
 
 
 # ==============================================================================
@@ -493,8 +472,6 @@ def diy_dashboard(request):
 
 
 # views.py
-from rest_framework.authentication import TokenAuthentication, SessionAuthentication, BasicAuthentication
-from itertools import islice
 
 DAILY_COUNT_DEFAULT = getattr(settings, "DIY_DAILY_COUNT", 3)
 
@@ -709,9 +686,6 @@ def _reseed_for_date(date_val, request=None, desired_count=None):
             defaults={"pool": pool},
         )
 
-def _abs_or_none(request, f):  # already suggested earlier
-    return request.build_absolute_uri(f.url) if f else None
-
 def _youtube_id(url: str) -> str | None:
     try:
         p = urlparse(url)
@@ -884,7 +858,23 @@ class DIYSubmitView(views.APIView):
 # Rewards API (Reloadly)
 # ==============================================================================
 
+def parse_amount_to_decimal(amount_str: str) -> Decimal:
+    """
+    Parse user-entered amount like '₱50', 'PHP 50.00', '50.00', '1,000.50' → Decimal('...').
+    Raises ValueError on invalid input.
+    """
+    s = (amount_str or "").strip()
+    # strip leading currency words/symbols (₱, PHP, Php, P)
+    s = re.sub(r"^\s*(?:₱|PHP|Php|php|P)\s*", "", s)
+    s = s.replace(",", "")  # allow "1,000.50"
+    if not re.fullmatch(r"\d+(\.\d+)?", s):
+        raise ValueError("Invalid amount format.")
+    return Decimal(s).quantize(TWO_DP, rounding=ROUND_HALF_UP)
+
+
+
 class RedeemRewardView(views.APIView):
+    authentication_classes = [TokenAuthentication]
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
@@ -896,84 +886,138 @@ class RedeemRewardView(views.APIView):
             if not raw_phone or not amount_str:
                 return Response({"success": False, "error": "Missing phone or amount."}, status=400)
 
-            digits = "".join(ch for ch in amount_str if ch.isdigit())
-            if not digits:
-                return Response({"success": False, "error": "Invalid amount format."}, status=400)
-            amount_value = int(digits)
+            try:
+                amount_value = parse_amount_to_decimal(amount_str)  # Decimal('50.00')
+            except ValueError as e:
+                return Response({"success": False, "error": str(e)}, status=400)
 
-            # default 100 pts per PHP unless overridden
-            POINTS_PER_PHP = int(getattr(settings, "POINTS_PER_PHP", 100))
-            points_cost = amount_value * POINTS_PER_PHP
+            POINTS_PER_PHP = int(getattr(settings, "POINTS_PER_PHP", 10))
+            # points are integers; round half up just in case
+            points_cost = int((amount_value * POINTS_PER_PHP).to_integral_value(rounding=ROUND_HALF_UP))
 
             if user.total_points < points_cost:
                 return Response(
-                    {"success": False, "error": f"Insufficient points. Need {points_cost}, have {user.total_points}."},
+                    {
+                        "success": False,
+                        "error": f"Insufficient points. Need {points_cost}, have {user.total_points}.",
+                        "needed_points": points_cost,
+                        "have_points": user.total_points,
+                        "rate_points_per_php": POINTS_PER_PHP,
+                    },
                     status=400,
                 )
 
             try:
-                phone = _normalize_phone_ph(raw_phone)
+                phone = normalize_phone(raw_phone, country_code="PH")
             except ReloadlyError as e:
                 return Response({"success": False, "error": str(e)}, status=400)
 
             try:
                 op = auto_detect_operator(phone, country_code="PH")
+                operator_id = op.get("operatorId")
+                if not operator_id:
+                    return Response({"success": False, "error": "Could not determine operator."}, status=400)
             except ReloadlyError as e:
                 return Response({"success": False, "error": f"Operator detect failed: {e}"}, status=400)
-
-            operator_id = op.get("operatorId")
             fixed = op.get("fixedAmounts") or []
             min_amt = op.get("minAmount")
             max_amt = op.get("maxAmount")
 
             if fixed:
-                allowed = {int(float(x)) for x in fixed}
+                allowed = {Decimal(str(x)).quantize(TWO_DP) for x in fixed}
                 if amount_value not in allowed:
                     return Response(
-                        {"success": False, "error": f"Amount must be one of: {sorted(allowed)}"},
+                        {"success": False, "error": f"Amount must be one of: {[str(a) for a in sorted(allowed)]}"},
                         status=400,
                     )
             else:
-                if min_amt is not None and max_amt is not None:
-                    if not (float(min_amt) <= amount_value <= float(max_amt)):
-                        return Response(
-                            {"success": False, "error": f"Amount must be between {min_amt} and {max_amt}"},
-                            status=400,
-                        )
-
+                min_dec = Decimal(str(min_amt)).quantize(TWO_DP) if min_amt is not None else None
+                max_dec = Decimal(str(max_amt)).quantize(TWO_DP) if max_amt is not None else None
+                if (min_dec is not None and amount_value < min_dec) or (max_dec is not None and amount_value > max_dec):
+                    bounds_parts = [
+                        f"≥ {min_dec}" if min_dec is not None else None,
+                        f"≤ {max_dec}" if max_dec is not None else None,
+                    ]
+                    bounds = " and ".join([p for p in bounds_parts if p])  # filter Nones
+                    return Response({"success": False, "error": f"Amount must be {bounds}."}, status=400)
+            
+            name = (op.get("name") or "").lower()
+            if "globe" in name: telco_code = "globe"
+            elif "smart" in name or "sun" in name or "tnt" in name: telco_code = "smart"
+            elif "dito" in name: telco_code = "dito"
+            else: telco_code = "other"
+            
+            custom_id = f"reward:{user.id}:{timezone.now().strftime('%Y%m%d%H%M%S')}"
+            
             rr = RewardRequest.objects.create(
                 user=user,
-                mobile_number=phone,
-                telco="other",
+                mobile_number=phone,               # already in 09... format from normalize_phone
+                telco=telco_code,
+                operator_id=operator_id,
+                operator_name=op.get("name") or None,
                 points_used=points_cost,
                 amount=amount_value,
                 status="requested",
+                custom_identifier=custom_id, 
             )
 
             try:
-                tx = send_topup(phone=phone, amount=float(amount_value), operator_id=operator_id)
+                tx = send_topup(
+                    phone=phone,
+                    amount=float(amount_value),
+                    operator_id=operator_id,
+                    custom_identifier=custom_id   # <-- match the saved custom_id
+                )
             except ReloadlyError as e:
                 rr.status = "rejected"
                 rr.date_processed = timezone.now()
-                rr.save(update_fields=["status", "date_processed"])
+                rr.last_error = str(e)           # <-- capture error for audit
+                rr.save(update_fields=["status", "date_processed", "last_error"])
                 return Response({"success": False, "error": str(e)}, status=400)
 
-            status_up = (tx.get("status") or "").upper()
+            # persist tx info (id + raw payload)
+            rr.reloadly_tx_id = str(tx.get("transactionId") or tx.get("id") or "")
+            rr.reloadly_raw = tx
+            rr.save(update_fields=["reloadly_tx_id", "reloadly_raw"])
 
+            status_up = (tx.get("status") or "").upper()
             if status_up in {"SUCCESS", "SUCCESSFUL", "COMPLETED"}:
                 user.total_points -= points_cost
                 user.save(update_fields=["total_points"])
+                UserPointsLedger.objects.create(
+                    user=user,
+                    submission=None,
+                    source="adjustment",   # or add a new choice like "reward_redeem"
+                    delta_points=-points_cost,
+                    balance_after=user.total_points,
+                    notes=f"Mobile load: {op.get('name') or telco_code} ({phone})",
+                )
                 rr.status = "paid"
                 rr.date_processed = timezone.now()
                 rr.processed_by = request.user
                 rr.save(update_fields=["status", "date_processed", "processed_by"])
                 return Response(
-                    {"success": True, "message": "Load sent successfully!", "new_total_points": user.total_points},
+                    {
+                        "success": True,
+                        "message": "Load sent successfully!",
+                        "new_total_points": user.total_points,
+                        "amount_php": str(amount_value),
+                        "points_cost": points_cost,
+                        "rate_points_per_php": POINTS_PER_PHP,
+                    },
                     status=201,
                 )
-
             elif status_up in {"PENDING", "PROCESSING", "REQUESTED"}:
-                return Response({"success": True, "message": "Top-up request accepted and processing."}, status=202)
+                return Response(
+                    {
+                        "success": True,
+                        "message": "Top-up request accepted and processing.",
+                        "amount_php": str(amount_value),
+                        "points_cost": points_cost,
+                        "rate_points_per_php": POINTS_PER_PHP,
+                    },
+                    status=202,
+                )
 
             else:
                 rr.status = "rejected"
@@ -1001,39 +1045,73 @@ def reloadly_webhook(request):
         payload = json.loads(request.body.decode("utf-8"))
         txn_status = (payload.get("status") or "").upper()
 
-        phone_raw = payload.get("recipientPhone") or payload.get("recipientPhoneNumber")
-        amount = int(float(payload.get("requestedAmount") or payload.get("amount") or 0))
-        if not phone_raw or not amount:
-            return HttpResponse(status=200)
+        # recipientPhone can be a dict or a string
+        rp = payload.get("recipientPhone") or payload.get("recipientPhoneNumber")
+        if isinstance(rp, dict):
+            phone_raw = rp.get("number") or ""
+        else:
+            phone_raw = rp or ""
+
+        amt_raw = payload.get("requestedAmount") or payload.get("amount") or 0
 
         try:
-            phone = _normalize_phone_ph(phone_raw)
+            phone_norm = normalize_phone(phone_raw, country_code="PH")
         except Exception:
-            phone = phone_raw
+            phone_norm = phone_raw
 
-        rr = (
-            RewardRequest.objects.filter(mobile_number=phone, amount=amount, status="requested")
-            .order_by("-date_requested")
-            .first()
-        )
+        try:
+            amount_dec = Decimal(str(amt_raw)).quantize(TWO_DP)
+        except Exception:
+            return HttpResponse(status=200)
+
+        # try to match by customIdentifier first (if present)
+        custom_id = payload.get("customIdentifier") or payload.get("customIdentifierId")
+        rr = None
+        if custom_id:
+            rr = RewardRequest.objects.filter(custom_identifier=custom_id).order_by("-date_requested").first()
+
+        # fallback to phone+amount+requested
+        if not rr:
+            rr = (
+                RewardRequest.objects
+                .filter(mobile_number=phone_norm, amount=amount_dec, status="requested")
+                .order_by("-date_requested")
+                .first()
+            )
+
         if not rr:
             return HttpResponse(status=200)
 
+        # attach webhook payload + tx id
+        rr.reloadly_tx_id = str(payload.get("transactionId") or payload.get("id") or rr.reloadly_tx_id or "")
+        rr.reloadly_raw = payload
+
         if txn_status in {"SUCCESS", "SUCCESSFUL", "COMPLETED"}:
             user = rr.user
-            if user.total_points >= rr.points_used:
-                user.total_points -= rr.points_used
-                user.save(update_fields=["total_points"])
-            rr.status = "paid"
-            rr.date_processed = timezone.now()
-            rr.save(update_fields=["status", "date_processed"])
+            # inside webhook, when marking paid:
+            if rr.status == "requested":
+                user = rr.user
+                if user.total_points >= rr.points_used:
+                    user.total_points -= rr.points_used
+                    user.save(update_fields=["total_points"])
+                    UserPointsLedger.objects.create(
+                        user=user,
+                        submission=None,
+                        source="adjustment",
+                        delta_points=-rr.points_used,
+                        balance_after=user.total_points,
+                        notes=f"Mobile load webhook ({phone_norm})",
+                    )
+                rr.status = "paid"
+                rr.date_processed = timezone.now()
 
         elif txn_status in {"FAILED", "ERROR"}:
             rr.status = "rejected"
             rr.date_processed = timezone.now()
-            rr.save(update_fields=["status", "date_processed"])
 
+        rr.save(update_fields=["reloadly_tx_id", "reloadly_raw", "status", "date_processed"])
         return HttpResponse(status=200)
+
     except Exception:
         LOGGER.exception("Reloadly webhook error")
         return HttpResponse(status=400)
@@ -1119,7 +1197,7 @@ class StaffLoginView(views.APIView):
 
 
 class ApproveStaffView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsStaffish]
 
     def post(self, request, user_id: int):
         staff = get_object_or_404(User, pk=user_id)
@@ -1148,7 +1226,7 @@ class ApproveStaffView(views.APIView):
 
 
 class RejectStaffView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsStaffish]
 
     def post(self, request, user_id: int):
         staff = get_object_or_404(User, pk=user_id)

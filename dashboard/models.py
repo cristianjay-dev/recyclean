@@ -251,19 +251,36 @@ class UserPointsLedger(models.Model):
         return f"Ledger({self.user_id}: {self.delta_points} → {self.balance_after})"
 
 
+PH_LOCAL_PHONE_VALIDATOR = RegexValidator(
+    regex=r'^0\d{10}$',
+    message="PH mobile must be local format 09XXXXXXXXX (11 digits).",
+)
 class RewardRequest(models.Model):
     TELCO_CHOICES = (("globe", "Globe"), ("smart", "Smart"), ("dito", "DITO"), ("other", "Other"))
     STATUS_CHOICES = (("requested", "Requested"), ("paid", "Paid"), ("rejected", "Rejected"))
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="reward_requests")
-    mobile_number = models.CharField(max_length=20)
+
+    # Store canonical local 09...; inputs like +63... are normalized in views/services.
+    mobile_number = models.CharField(max_length=20, validators=[PH_LOCAL_PHONE_VALIDATOR])
+
     telco = models.CharField(max_length=10, choices=TELCO_CHOICES, default="other")
+    operator_id = models.IntegerField(null=True, blank=True)
+    operator_name = models.CharField(max_length=100, null=True, blank=True)
+
     points_used = models.PositiveIntegerField(validators=[MinValueValidator(1)])
-    amount = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])  # PHP
+    amount = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="requested")
     processed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="processed_rewards"
     )
+
+    custom_identifier = models.CharField(max_length=100, null=True, blank=True)
+    reloadly_tx_id = models.CharField(max_length=100, null=True, blank=True)
+    reloadly_raw = models.JSONField(null=True, blank=True)
+    last_error = models.TextField(null=True, blank=True)
+
     date_requested = models.DateTimeField(auto_now_add=True)
     date_processed = models.DateTimeField(null=True, blank=True)
 
@@ -274,6 +291,11 @@ class RewardRequest(models.Model):
             models.Index(fields=["status"]),
             models.Index(fields=["date_requested"]),
             models.Index(fields=["mobile_number"]),
+            # composite for webhook match (filters mobile_number, amount, status; then DB can sort by date)
+            models.Index(
+                fields=["mobile_number", "amount", "status", "date_requested"],
+                name="rwreq_webhook_match_idx",
+            ),
         ]
 
     def __str__(self) -> str:
