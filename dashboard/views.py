@@ -1436,7 +1436,7 @@ class MeView(views.APIView):
             "success": True,
             "user": {
                 "id": u.id,
-                "username": u.username,         # read-only in app
+                "username": u.username,
                 "first_name": u.first_name,
                 "last_name": u.last_name,
                 "name": u.get_full_name(),
@@ -1450,16 +1450,51 @@ class MeView(views.APIView):
     def patch(self, request):
         ser = MeUpdateSerializer(data=request.data, context={"request": request})
         ser.is_valid(raise_exception=True)
+
         u: User = request.user
         data = ser.validated_data
+        updated_fields = []
 
-        # keep username immutable
-        if "first_name" in data: u.first_name = data["first_name"]
-        if "last_name"  in data: u.last_name  = data["last_name"]
-        if "email"      in data: u.email      = data["email"].lower()
-        if "mobile"     in data: u.mobile_number = (data["mobile"] or None)
-        u.save(update_fields=["first_name", "last_name", "email", "mobile_number"])
-        return Response({"success": True, "message": "Profile updated."})
+        def _clean(s: str) -> str:
+            # collapse internal whitespace and trim
+            return re.sub(r"\s+", " ", (s or "").strip())
+
+        if "first_name" in data:
+            u.first_name = _clean(data["first_name"])
+            updated_fields.append("first_name")
+
+        if "last_name" in data:
+            u.last_name = _clean(data["last_name"])
+            updated_fields.append("last_name")
+
+        if "email" in data:
+            u.email = (data["email"] or "").lower()
+            updated_fields.append("email")
+
+        if "mobile" in data:
+            u.mobile_number = (data["mobile"] or None)
+            updated_fields.append("mobile_number")
+
+        # Save only what changed (if nothing provided, do nothing)
+        if updated_fields:
+            u.save(update_fields=updated_fields)
+
+        return Response({
+            "success": True,
+            "message": "Profile updated.",
+            "user": {
+                "id": u.id,
+                "username": u.username,
+                "first_name": u.first_name,
+                "last_name": u.last_name,
+                "name": u.get_full_name(),  # <- full name after update
+                "email": u.email,
+                "mobile": u.mobile_number,
+                "points": u.total_points,
+                "barangay": u.barangay.name if u.barangay else None,
+            }
+        })
+
 
 
 class ChangePasswordView(views.APIView):
