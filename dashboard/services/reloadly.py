@@ -202,6 +202,8 @@ def _validate_amount_against_operator(op: Dict[str, Any], amount: float) -> floa
     return amt
 
 # ---------------- Topups ----------------
+# services/reloadly.py  (only the send_topup function body changes)
+
 def send_topup(
     *,
     phone: str,
@@ -211,23 +213,29 @@ def send_topup(
 ) -> Dict[str, Any]:
     """
     POST /topups
-    Body uses string recipientPhone (E.164), as expected by your views.
+    Body must include recipientPhone as an object and useLocalAmount=True
+    when the amount is in the destination currency (PHP).
     """
-    normalized = normalize_phone(phone, country_code="PH")
+    normalized = normalize_phone(phone, country_code="PH")      # "+63917XXXXXXX"
+    # Reloadly wants countryCode + number (no '+')
+    number_no_plus = normalized.lstrip("+")
 
-    # Optional: validate against the operator we’re using (helps catch UI errors)
+    # (Optional) pre-validate against operator limits — keep as-is if you like
     try:
         op = auto_detect_operator(normalized, country_code="PH")
         amount = _validate_amount_against_operator(op, amount)
     except ReloadlyError:
-        # If detect fails we still let Reloadly validate, but your view already did detect.
         pass
 
     url = f"{settings.RELOADLY_TOPUPS_BASE}/topups"
     payload: Dict[str, Any] = {
         "operatorId": int(operator_id),
         "amount": float(Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
-        "recipientPhone": normalized,  # E.164 string
+        "useLocalAmount": True,                 # <-- IMPORTANT for PHP amounts
+        "recipientPhone": {                     # <-- MUST be an object
+            "countryCode": "PH",
+            "number": number_no_plus           # e.g. "63917XXXXXXX"
+        },
     }
     if custom_identifier:
         payload["customIdentifier"] = str(custom_identifier)
@@ -241,7 +249,5 @@ def send_topup(
         raise ReloadlyError(f"Top-up failed: {resp.status_code} {detail}")
 
     data = resp.json() if resp.text.strip() else {}
-    # Normalize status so your views can rely on it
-    status = (data.get("status") or data.get("transactionStatus") or "").upper() or "PENDING"
-    data["status"] = status
+    data["status"] = (data.get("status") or data.get("transactionStatus") or "").upper() or "PENDING"
     return data
