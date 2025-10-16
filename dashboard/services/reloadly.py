@@ -5,6 +5,7 @@ import re
 import threading
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, Optional
+from urllib.parse import quote
 
 import requests
 from django.conf import settings
@@ -146,18 +147,25 @@ def list_reloadly_transactions(page: int = 1, size: int = 20) -> Dict[str, Any]:
 # ---------------- Operators ----------------
 def auto_detect_operator(phone: str, country_code: str = "PH") -> Dict[str, Any]:
     """
-    Use the query form to avoid '+' path issues:
-    GET /operators/auto-detect/phone?phone=...&countryCode=PH
+    Use the **path** form (more widely supported):
+      GET /operators/auto-detect/phone/{E164}/countries/{countryCode}
     """
-    url = f"{settings.RELOADLY_TOPUPS_BASE}/operators/auto-detect/phone"
-    params = {"phone": phone, "countryCode": country_code}
-    resp = _request_with_refresh("GET", url, params=params)
+    # Make sure it's E.164 (e.g., +639171234567)
+    e164 = normalize_phone(phone, country_code=country_code)
+
+    # The '+' must be URL-encoded; quote(..., safe="") encodes everything that needs it
+    phone_segment = quote(e164, safe="")
+    url = f"{settings.RELOADLY_TOPUPS_BASE}/operators/auto-detect/phone/{phone_segment}/countries/{country_code}"
+
+    resp = _request_with_refresh("GET", url)
     if not resp.ok:
         raise ReloadlyError(f"Auto-detect failed: {resp.status_code} {resp.text}")
+
     data = resp.json()
     op = data[0] if isinstance(data, list) and data else data
     if not isinstance(op, dict) or not op.get("operatorId"):
         raise ReloadlyError("Unable to detect operator.")
+
     return {
         "operatorId": op.get("operatorId"),
         "name": op.get("name"),
