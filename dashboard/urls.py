@@ -46,6 +46,8 @@ urlpatterns = [
     # ------------------ Auth: Resident -------------------------------
     path("api/auth/resident/signup/", views.ResidentSignupView.as_view(), name="resident_signup"),
     path("api/auth/resident/login/", views.ResidentLoginView.as_view(), name="resident_login"),
+    path("api/me/", views.MeView.as_view(), name="me"),
+    path("api/auth/change-password/", views.ChangePasswordView.as_view(), name="change_password"),
 
     # ------------------ Submissions: intake → QR → claim -------------
     path("api/submissions/intake/", views.SubmissionIntakeView.as_view(), name="submission_intake"),

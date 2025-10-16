@@ -295,6 +295,39 @@ class IsStaffish(BasePermission):
 # Serializers
 # ==============================================================================
 
+
+# --- Profile serializers ---
+class MeUpdateSerializer(serializers.Serializer):
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name  = serializers.CharField(required=False, allow_blank=True)
+    email      = serializers.EmailField(required=False)
+    mobile     = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    def validate(self, attrs):
+        user: User = self.context["request"].user
+        email  = attrs.get("email")
+        mobile = attrs.get("mobile")
+        if email and User.objects.filter(email__iexact=email).exclude(id=user.id).exists():
+            raise serializers.ValidationError("Email already in use.")
+        if mobile and User.objects.filter(mobile_number=mobile).exclude(id=user.id).exists():
+            raise serializers.ValidationError("Mobile already in use.")
+        return attrs
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField()
+    new_password = serializers.CharField()
+
+    def validate(self, attrs):
+        user: User = self.context["request"].user
+        if not user.check_password(attrs["old_password"]):
+            raise serializers.ValidationError("Old password is incorrect.")
+        if len(attrs["new_password"]) < 8:
+            raise serializers.ValidationError("New password must be at least 8 characters.")
+        return attrs
+
+
+
 class StaffSignupSerializer(serializers.Serializer):
     username = serializers.CharField(required=False, allow_blank=True)
     first_name = serializers.CharField()
@@ -1392,6 +1425,58 @@ class ResidentLoginView(views.APIView):
                 "points": user.total_points,
             },
         })
+    
+class MeView(views.APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        u: User = request.user
+        return Response({
+            "success": True,
+            "user": {
+                "id": u.id,
+                "username": u.username,         # read-only in app
+                "first_name": u.first_name,
+                "last_name": u.last_name,
+                "name": u.get_full_name(),
+                "email": u.email,
+                "mobile": u.mobile_number,
+                "points": u.total_points,
+                "barangay": u.barangay.name if u.barangay else None,
+            }
+        })
+
+    def patch(self, request):
+        ser = MeUpdateSerializer(data=request.data, context={"request": request})
+        ser.is_valid(raise_exception=True)
+        u: User = request.user
+        data = ser.validated_data
+
+        # keep username immutable
+        if "first_name" in data: u.first_name = data["first_name"]
+        if "last_name"  in data: u.last_name  = data["last_name"]
+        if "email"      in data: u.email      = data["email"].lower()
+        if "mobile"     in data: u.mobile_number = (data["mobile"] or None)
+        u.save(update_fields=["first_name", "last_name", "email", "mobile_number"])
+        return Response({"success": True, "message": "Profile updated."})
+
+
+class ChangePasswordView(views.APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        ser = ChangePasswordSerializer(data=request.data, context={"request": request})
+        ser.is_valid(raise_exception=True)
+        u: User = request.user
+        u.set_password(ser.validated_data["new_password"])
+        u.save(update_fields=["password"])
+        # rotate token so old token can’t be reused
+        Token.objects.filter(user=u).delete()
+        token = Token.objects.create(user=u)
+        return Response({"success": True, "message": "Password changed.", "token": token.key})
+
 
 
 # ==============================================================================
