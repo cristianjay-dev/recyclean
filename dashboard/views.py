@@ -74,6 +74,17 @@ TWO_DP = Decimal("0.01")
 # Utilities
 # ==============================================================================
 
+def _is_real_staff(user) -> bool:
+    return bool(
+        user
+        and user.is_authenticated
+        and user.is_active
+        and user.is_approved
+        and user.is_staff
+        and user.groups.filter(name="staff").exists()
+    )
+
+
 def php_to_points(php_amount: int) -> int:
     rate = int(getattr(settings, "POINTS_PER_PHP", 10))
     return int(php_amount) * rate
@@ -260,12 +271,6 @@ def _admin_bypass_ok(request) -> bool:
 
 
 def require_staff_json(view_func):
-    """
-    JSON-friendly staff/auth check:
-    - Allows bypass in dev or with ADMIN_SHARED_KEY (see _admin_bypass_ok)
-    - 401 if not authenticated (and no bypass)
-    - 403 if authenticated but not staff-ish (and no bypass)
-    """
     @wraps(view_func)
     def _wrapped(request, *args, **kwargs):
         if _admin_bypass_ok(request):
@@ -273,23 +278,18 @@ def require_staff_json(view_func):
         u = request.user
         if not u.is_authenticated:
             return JsonResponse({"success": False, "error": "Authentication required."}, status=401)
-        is_staffish = u.is_superuser or u.is_staff or u.groups.filter(name="staff").exists()
-        if not is_staffish:
+        if not _is_real_staff(u):
             return JsonResponse({"success": False, "error": "Staff permission required."}, status=403)
         return view_func(request, *args, **kwargs)
     return _wrapped
 
+
 class IsStaffish(BasePermission):
     def has_permission(self, request, view):
-        u = request.user
-        # allow your existing shared-key/DEBUG bypass
         if _admin_bypass_ok(request):
             return True
-        return bool(
-            u and u.is_authenticated and (
-                u.is_superuser or u.is_staff or u.groups.filter(name="staff").exists()
-            )
-        )
+        return _is_real_staff(request.user)
+
 
 
 
@@ -1328,45 +1328,33 @@ class StaffSignupView(views.APIView):
 
 class StaffLoginView(views.APIView):
     permission_classes = [permissions.AllowAny]
-
     def post(self, request):
         ser = StaffLoginSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         identifier = ser.validated_data["identifier"]
         password = ser.validated_data["password"]
 
-        user = (
-            User.objects.filter(username__iexact=identifier).first()
-            or User.objects.filter(email__iexact=identifier).first()
-            or User.objects.filter(mobile_number=identifier).first()
-        )
+        user = (User.objects.filter(username__iexact=identifier).first()
+                or User.objects.filter(email__iexact=identifier).first()
+                or User.objects.filter(mobile_number=identifier).first())
         if not user:
             return Response({"success": False, "error": "Account not found."}, status=404)
 
-        # Must be an approved *staff* account (not just active+approved)
-        is_staffish = user.is_staff or user.groups.filter(name="staff").exists()
-        if not (user.is_active and user.is_approved and is_staffish):
+        # must be true staff
+        if not _is_real_staff(user):
             return Response({"success": False, "error": "Account pending approval or not staff."}, status=403)
 
-        user_auth = authenticate(username=user.username, password=password)
-        if not user_auth:
+        if not authenticate(username=user.username, password=password):
             return Response({"success": False, "error": "Incorrect password."}, status=400)
 
-        user.groups.add(get_or_create_group("staff"))
+        # do NOT add group here
         token, _ = Token.objects.get_or_create(user=user)
-        return Response({
-            "success": True,
-            "message": "Login successful.",
-            "token": token.key,
-            "user": {
-                "id": user.id,
-                "name": user.get_full_name(),
-                "email": user.email,
-                "username": user.username,
-                "mobile": user.mobile_number,
-                "barangay": user.barangay.name if user.barangay else None,
-            },
-        })
+        return Response({"success": True, "token": token.key, "user": {
+            "id": user.id, "name": user.get_full_name(), "email": user.email,
+            "username": user.username, "mobile": user.mobile_number,
+            "barangay": user.barangay.name if user.barangay else None,
+        }})
+
 
 
 class ApproveStaffView(views.APIView):
@@ -1695,6 +1683,7 @@ def dropoff_sites_view(request):
     return render(request, "dropoff_sites.html", {"sites": sites})
 
 @require_staff_json
+@ensure_csrf_cookie
 def staff_management_view(request):
     # Only real applications that are waiting for action
     pending_reqs = (
