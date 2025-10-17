@@ -61,7 +61,9 @@
     {% for u in active_staff %}
     <tr id="active-row-{{ u.id }}">
       <td class="p-3">{{ u.get_full_name|default:u.username }}</td>
-      <td class="p-3">{{ u.barangay.name if u.barangay else "" }}</td>
+      <td class="p-3">
+        {% if u.barangay %}{{ u.barangay.name }}{% endif %}
+      </td>
       <td class="p-3">{{ u.mobile_number }}</td>
       <td class="p-3">
         <div class="flex justify-center gap-2">
