@@ -17,7 +17,15 @@
     {% for req in pending_reqs %}
     <tr id="staff-row-{{ req.user.id }}">
       <td class="p-3">{{ req.user.get_full_name|default:req.user.username }}</td>
-      <td class="p-3">{{ req.requested_barangay.name if req.requested_barangay else (req.user.barangay.name if req.user.barangay else "") }}</td>
+      <td class="p-3">
+        {% if req.requested_barangay %}
+          {{ req.requested_barangay.name }}
+        {% elif req.user.barangay %}
+          {{ req.user.barangay.name }}
+        {% else %}
+        {% endif %}
+      </td>
+
       <td class="p-3">{{ req.user.mobile_number }}</td>
       <td class="p-3">
         <div class="flex justify-center gap-2">
