@@ -26,6 +26,10 @@ urlpatterns = [
 
     # ------------------ Staff Management (server-rendered) -----------
     path("staff-management/", views.staff_management_view, name="staff_management_view"),
+    # urls.py
+    path("admin/staff/<int:user_id>/approve/", views.approve_staff_json, name="approve_staff_json"),
+    path("admin/staff/<int:user_id>/reject/",  views.reject_staff_json,  name="reject_staff_json"),
+
 
     # ------------------ Auth: Staff ---------------------------------
     path("api/auth/staff/signup/", views.StaffSignupView.as_view(), name="staff_signup"),

@@ -21,6 +21,7 @@ from django.db.models import Sum, Min, Max
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
+from django.utils.decorators import method_decorator
 from django.utils.html import escape
 from django.utils.timezone import localtime
 from django.views import View
@@ -36,7 +37,6 @@ from rest_framework.parsers import JSONParser, MultiPartParser
 from rest_framework.response import Response
 from urllib.parse import urlparse, parse_qs
 from decimal import Decimal, ROUND_HALF_UP
-
 
 from .forms import DIYTutorialForm
 from .models import (
@@ -291,6 +291,61 @@ class IsStaffish(BasePermission):
             )
         )
 
+
+
+@require_POST
+@require_staff_json
+def approve_staff_json(request, user_id: int):
+    staff = get_object_or_404(User, pk=user_id)
+    req = StaffApprovalRequest.objects.filter(user=staff, status="pending").first()
+
+    # Approve
+    staff.is_approved = True
+    staff.is_active = True
+    staff.is_staff = True
+    staff.save(update_fields=["is_approved", "is_active", "is_staff"])
+
+    # Ensure group
+    staff_group = get_or_create_group("staff")
+    staff.groups.add(staff_group)
+
+    # Ensure DropOffSite link by barangay
+    if staff.barangay:
+        site, _ = DropOffSite.objects.get_or_create(barangay=staff.barangay)
+        site.staff_members.add(staff)
+
+    if req:
+        req.status = "approved"
+        req.decided_by = request.user if request.user.is_authenticated else None
+        req.decided_at = timezone.now()
+        req.save(update_fields=["status", "decided_by", "decided_at"])
+
+    return JsonResponse({"success": True})
+
+
+@require_POST
+@require_staff_json
+def reject_staff_json(request, user_id: int):
+    staff = get_object_or_404(User, pk=user_id)
+    with transaction.atomic():
+        # Mark the approval request as rejected for audit (optional).
+        req = StaffApprovalRequest.objects.filter(user=staff, status="pending").first()
+        if req:
+            req.status = "rejected"
+            req.decided_by = request.user if request.user.is_authenticated else None
+            req.decided_at = timezone.now()
+            req.save(update_fields=["status", "decided_by", "decided_at"])
+
+        # Remove M2M relations (optional; Django will clear on delete anyway).
+        for site in DropOffSite.objects.filter(staff_members=staff):
+            site.staff_members.remove(staff)
+
+        # Hard delete the user. DRF tokens and M2M rows will cascade away.
+        staff.delete()
+
+    return JsonResponse({"success": True})
+
+
 # ==============================================================================
 # Serializers
 # ==============================================================================
@@ -414,7 +469,7 @@ class DIYSubmitSerializer(serializers.Serializer):
 # ==============================================================================
 # Dashboard & Reward Requests (server-rendered)
 # ==============================================================================
-
+@require_staff_json
 def dashboard(request):
     reloadly_balance = None
     reloadly_currency_code = "PHP"
@@ -446,7 +501,7 @@ def dashboard(request):
     }
     return render(request, "dashboard.html", context)
 
-
+@require_staff_json
 def reward_requests_view(request):
     reward_requests = RewardRequest.objects.select_related("user").order_by("-id")
     reloadly_balance = None
@@ -579,7 +634,7 @@ def user_history(request, user_id: int):
 # ==============================================================================
 # DIY management (server page + APIs your template uses)
 # ==============================================================================
-
+@require_staff_json
 @ensure_csrf_cookie
 def diy_dashboard(request):
     form = DIYTutorialForm()
@@ -1288,15 +1343,16 @@ class StaffLoginView(views.APIView):
         if not user:
             return Response({"success": False, "error": "Account not found."}, status=404)
 
-        if not user.is_approved or not user.is_active:
-            return Response({"success": False, "error": "Account pending approval."}, status=403)
+        # Must be an approved *staff* account (not just active+approved)
+        is_staffish = user.is_staff or user.groups.filter(name="staff").exists()
+        if not (user.is_active and user.is_approved and is_staffish):
+            return Response({"success": False, "error": "Account pending approval or not staff."}, status=403)
 
         user_auth = authenticate(username=user.username, password=password)
         if not user_auth:
             return Response({"success": False, "error": "Incorrect password."}, status=400)
 
         user.groups.add(get_or_create_group("staff"))
-
         token, _ = Token.objects.get_or_create(user=user)
         return Response({
             "success": True,
@@ -1347,14 +1403,21 @@ class RejectStaffView(views.APIView):
 
     def post(self, request, user_id: int):
         staff = get_object_or_404(User, pk=user_id)
-        req = StaffApprovalRequest.objects.filter(user=staff, status="pending").first()
-        if req:
-            req.status = "rejected"
-            req.decided_by = request.user
-            req.decided_at = timezone.now()
-            req.save(update_fields=["status", "decided_by", "decided_at"])
-        staff.delete()
+        with transaction.atomic():
+            req = StaffApprovalRequest.objects.filter(user=staff, status="pending").first()
+            if req:
+                req.status = "rejected"
+                req.decided_by = request.user
+                req.decided_at = timezone.now()
+                req.save(update_fields=["status", "decided_by", "decided_at"])
+
+            for site in DropOffSite.objects.filter(staff_members=staff):
+                site.staff_members.remove(staff)
+
+            staff.delete()
+
         return Response({"success": True})
+
 
 
 class ResidentSignupView(views.APIView):
@@ -1519,7 +1582,7 @@ class ChangePasswordView(views.APIView):
 # ==============================================================================
 
 class SubmissionIntakeView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsStaffish]
     parser_classes = [JSONParser]
 
     def post(self, request):
@@ -1557,7 +1620,7 @@ class SubmissionIntakeView(views.APIView):
             status=201,
         )
 
-
+@method_decorator(require_staff_json, name='dispatch')
 class SubmissionQRView(View):
     """GET /api/submissions/<id>/qr.png → QR PNG of the submission's qr_token"""
     def get(self, request, submission_id: int):
@@ -1625,19 +1688,36 @@ class SubmissionClaimView(views.APIView):
 # ==============================================================================
 # Staff & Site metrics / pages
 # ==============================================================================
-
+@require_staff_json
 def dropoff_sites_view(request):
     # M2M: prefetch staff_members
     sites = DropOffSite.objects.select_related("barangay").prefetch_related("staff_members")
     return render(request, "dropoff_sites.html", {"sites": sites})
 
-
+@require_staff_json
 def staff_management_view(request):
-    pending_staff = User.objects.filter(is_approved=False).order_by("date_joined")
-    active_staff = User.objects.filter(is_approved=True).order_by("date_joined")
-    return render(request, "staff_management.html", {"pending_staff": pending_staff, "active_staff": active_staff})
+    # Only real applications that are waiting for action
+    pending_reqs = (
+        StaffApprovalRequest.objects
+        .select_related("user", "requested_barangay")
+        .filter(status="pending")
+        .order_by("created_at")
+    )
+
+    active_staff = (
+        User.objects
+        .filter(is_approved=True, is_staff=True, is_superuser=False)
+        .order_by("date_joined")
+    )
+
+    return render(
+        request,
+        "staff_management.html",
+        {"pending_reqs": pending_reqs, "active_staff": active_staff},
+    )
 
 
+@require_staff_json
 def submissions_by_dropoff_site(request, site_id: int):
     site = get_object_or_404(DropOffSite, id=site_id)
     submissions = Submission.objects.filter(dropoff_site=site).select_related("staff", "claimed_by").order_by("-created_at")
@@ -1645,6 +1725,7 @@ def submissions_by_dropoff_site(request, site_id: int):
 
 
 @api_view(["GET"])
+@permission_classes([IsStaffish])
 def staff_transaction_history(request, staff_id: int):
     txs = StaffTransaction.objects.filter(staff_id=staff_id).select_related("submission").order_by("-created_at")
     data = [
@@ -1696,7 +1777,7 @@ def _period_bounds(param: str) -> Tuple[date, date, str, List[str]]:
     labels = [(start + timedelta(days=i)).strftime("%b %d") for i in range(7)]
     return start, end, "week", labels
 
-
+@require_staff_json
 def dropoff_site_detail(request, site_id: int):
     site = get_object_or_404(DropOffSite, id=site_id)
     site_staff = list(site.staff_members.all())
@@ -1773,24 +1854,42 @@ def dropoff_site_detail(request, site_id: int):
         },
     )
 
-
 @api_view(["GET"])
+@authentication_classes([TokenAuthentication, SessionAuthentication, BasicAuthentication])
+@permission_classes([permissions.IsAuthenticated])
 def get_user_details(request, user_id: int):
     user = User.objects.filter(pk=user_id).first()
     if not user:
         return Response({"success": False, "error": "User not found."}, status=404)
 
+    # allow the user themselves, or staff-ish, or admin-bypass
+    if not (
+        request.user.id == user.id
+        or _admin_bypass_ok(request)
+        or request.user.is_superuser
+        or request.user.is_staff
+        or request.user.groups.filter(name="staff").exists()
+    ):
+        return Response({"success": False, "error": "Forbidden."}, status=403)
+
     total_points = user.total_points or 0
-    WEEKLY_TARGET = 50  # bottles
+    WEEKLY_TARGET = 50
     sow = today_ph() - timedelta(days=today_ph().weekday())
     weekly = Submission.objects.filter(claimed_by=user, created_at__date__gte=sow)
+
     bottles_this_week = 0
     for sub in weekly.only("bottle_data"):
         for b in sub.bottle_data or []:
             bottles_this_week += int(b.get("count") or 0)
 
     quota_progress = min(bottles_this_week / WEEKLY_TARGET, 1.0) if WEEKLY_TARGET > 0 else 0.0
-    return Response({"success": True, "id": user.id, "name": user.get_full_name(), "points": total_points, "quota_progress": quota_progress})
+    return Response({
+        "success": True,
+        "id": user.id,
+        "name": user.get_full_name(),
+        "points": total_points,
+        "quota_progress": quota_progress
+    })
 
 
 # ==============================================================================
@@ -1967,40 +2066,26 @@ def _summary_csv_response(filename: str, rows: List[dict]) -> HttpResponse:
         writer.writerow({k: r.get(k, "") for k in headers})
     return response
 
-
+@require_staff_json
 def export_all_submissions_csv(request):
-    """
-    NOW: Overall SUMMARY CSV.
-    - One row per DropOffSite (per barangay).
-    - Supports optional ?from=YYYY-MM-DD&to=YYYY-MM-DD&status=<status>.
-    """
-    if not (request.user.is_authenticated or _admin_bypass_ok(request)):
-        return HttpResponse(status=401)
-
     rows = []
     sites = DropOffSite.objects.select_related("barangay").prefetch_related("staff_members")
     for site in sites:
         qs = Submission.objects.filter(dropoff_site=site)
         qs = _apply_submission_filters(qs, request)
         rows.append(_site_summary(site, qs))
-
     return _summary_csv_response("sites_summary_all.csv", rows)
 
-
+@require_staff_json
 def export_site_submissions_csv(request, site_id: int):
-    """
-    NOW: Per-site SUMMARY CSV (single-row).
-    - Optional filters ?from=YYYY-MM-DD&to=YYYY-MM-DD&status=<status>.
-    """
-    if not (request.user.is_authenticated or _admin_bypass_ok(request)):
-        return HttpResponse(status=401)
-
-    site = get_object_or_404(DropOffSite.objects.select_related("barangay").prefetch_related("staff_members"), pk=site_id)
+    site = get_object_or_404(
+        DropOffSite.objects.select_related("barangay").prefetch_related("staff_members"),
+        pk=site_id
+    )
     qs = Submission.objects.filter(dropoff_site=site)
     qs = _apply_submission_filters(qs, request)
     row = _site_summary(site, qs)
     return _summary_csv_response(f"site_{site.id}_summary.csv", [row])
-
 
 # ==============================================================================
 # Drop-off Site deletion (used by template's JS button)
