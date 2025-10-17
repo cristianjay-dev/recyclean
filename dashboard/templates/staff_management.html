@@ -4,31 +4,35 @@
 
 <!-- PENDING STAFF -->
 <h2 class="text-xl font-semibold mb-2">Pending Staff Requests</h2>
-<table class="min-w-full bg-white rounded shadow mb-8">
+<table class="table-fixed w-full bg-white rounded shadow mb-8">
+  <colgroup>
+    <col class="w-2/5">  {# Name #}
+    <col class="w-1/5">  {# Barangay #}
+    <col class="w-1/5">  {# Mobile #}
+    <col class="w-1/5">  {# Actions #}
+  </colgroup>
   <thead class="bg-gray-200">
     <tr>
-      <th class="p-3">Name</th>
-      <th class="p-3">Barangay</th>
-      <th class="p-3">Mobile</th>
+      <th class="p-3 text-left">Name</th>
+      <th class="p-3 text-left">Barangay</th>
+      <th class="p-3 text-left">Mobile</th>
       <th class="p-3 text-center">Actions</th>
     </tr>
   </thead>
   <tbody id="pending-staff-body">
     {% for req in pending_reqs %}
     <tr id="staff-row-{{ req.user.id }}">
-      <td class="p-3">{{ req.user.get_full_name|default:req.user.username }}</td>
-      <td class="p-3">
+      <td class="p-3 align-middle truncate">{{ req.user.get_full_name|default:req.user.username }}</td>
+      <td class="p-3 align-middle">
         {% if req.requested_barangay %}
           {{ req.requested_barangay.name }}
         {% elif req.user.barangay %}
           {{ req.user.barangay.name }}
-        {% else %}
         {% endif %}
       </td>
-
-      <td class="p-3">{{ req.user.mobile_number }}</td>
-      <td class="p-3">
-        <div class="flex justify-center gap-2">
+      <td class="p-3 align-middle font-mono whitespace-nowrap">{{ req.user.mobile_number }}</td>
+      <td class="p-3 align-middle">
+        <div class="flex justify-center gap-2 whitespace-nowrap">
           <button onclick="approveStaff({{ req.user.id }})"
                   class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded">
             Approve
@@ -41,33 +45,39 @@
       </td>
     </tr>
     {% empty %}
-    <tr id="no-pending"><td colspan="4" class="p-3 text-gray-500 text-center">No pending staff.</td></tr>
+    <tr id="no-pending">
+      <td colspan="4" class="p-3 text-gray-500 text-center">No pending staff.</td>
+    </tr>
     {% endfor %}
   </tbody>
 </table>
 
 <!-- ACTIVE STAFF -->
 <h2 class="text-xl font-semibold mb-2">Active Staff</h2>
-<table class="min-w-full bg-white rounded shadow">
+<table class="table-fixed w-full bg-white rounded shadow">
+  <colgroup>
+    <col class="w-2/5">  {# Name #}
+    <col class="w-1/5">  {# Barangay #}
+    <col class="w-1/5">  {# Mobile #}
+    <col class="w-1/5">  {# Actions #}
+  </colgroup>
   <thead class="bg-gray-200">
     <tr>
-      <th class="p-3">Name</th>
-      <th class="p-3">Barangay</th>
-      <th class="p-3">Mobile</th>
+      <th class="p-3 text-left">Name</th>
+      <th class="p-3 text-left">Barangay</th>
+      <th class="p-3 text-left">Mobile</th>
       <th class="p-3 text-center">Actions</th>
     </tr>
   </thead>
   <tbody id="active-staff-body">
     {% for u in active_staff %}
     <tr id="active-row-{{ u.id }}">
-      <td class="p-3">{{ u.get_full_name|default:u.username }}</td>
-      <td class="p-3">
-        {% if u.barangay %}{{ u.barangay.name }}{% endif %}
-      </td>
-      <td class="p-3">{{ u.mobile_number }}</td>
-      <td class="p-3">
-        <div class="flex justify-center gap-2">
-          <button onclick="viewTransactions({{ u.id }}, '{{ u.get_full_name|default:u.username }}')"
+      <td class="p-3 align-middle truncate">{{ u.get_full_name|default:u.username }}</td>
+      <td class="p-3 align-middle">{% if u.barangay %}{{ u.barangay.name }}{% endif %}</td>
+      <td class="p-3 align-middle font-mono whitespace-nowrap">{{ u.mobile_number }}</td>
+      <td class="p-3 align-middle">
+        <div class="flex justify-center gap-2 whitespace-nowrap">
+          <button onclick="viewTransactions({{ u.id }}, '{{ (u.get_full_name|default:u.username)|escapejs }}')"
                   class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded">
             View Transactions
           </button>
@@ -79,7 +89,9 @@
       </td>
     </tr>
     {% empty %}
-    <tr id="no-active"><td colspan="4" class="p-3 text-gray-500 text-center">No active staff.</td></tr>
+    <tr id="no-active">
+      <td colspan="4" class="p-3 text-gray-500 text-center">No active staff.</td>
+    </tr>
     {% endfor %}
   </tbody>
 </table>
@@ -109,11 +121,11 @@ function rowHtmlActive(staff) {
   const safeName = staff.name.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   return `
     <tr id="active-row-${staff.id}">
-      <td class="p-3">${safeName}</td>
-      <td class="p-3">${staff.barangay ?? ""}</td>
-      <td class="p-3">${staff.mobile ?? ""}</td>
-      <td class="p-3">
-        <div class="flex justify-center gap-2">
+      <td class="p-3 align-middle truncate">${safeName}</td>
+      <td class="p-3 align-middle">${staff.barangay ?? ""}</td>
+      <td class="p-3 align-middle font-mono whitespace-nowrap">${staff.mobile ?? ""}</td>
+      <td class="p-3 align-middle">
+        <div class="flex justify-center gap-2 whitespace-nowrap">
           <button onclick="viewTransactions(${staff.id}, '${safeName}')"
                   class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded">
             View Transactions
@@ -135,7 +147,6 @@ function approveStaff(userId) {
   .then(r => r.json())
   .then(data => {
     if (data.success) {
-      // Optimistically move row to active list
       const row = document.getElementById(`staff-row-${userId}`);
       const name = row?.querySelector('td:nth-child(1)')?.textContent?.trim() ?? '';
       const brgy = row?.querySelector('td:nth-child(2)')?.textContent?.trim() ?? '';
