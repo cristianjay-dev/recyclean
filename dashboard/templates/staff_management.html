@@ -6,10 +6,10 @@
 <h2 class="text-xl font-semibold mb-2">Pending Staff Requests</h2>
 <table class="table-fixed w-full bg-white rounded shadow mb-8">
   <colgroup>
-    <col class="w-2/5">  {# Name #}
-    <col class="w-1/5">  {# Barangay #}
-    <col class="w-1/5">  {# Mobile #}
-    <col class="w-1/5">  {# Actions #}
+    <col class="w-2/5">{# Name #}
+    <col class="w-1/5">{# Barangay #}
+    <col class="w-1/5">{# Mobile #}
+    <col class="w-1/5">{# Actions #}
   </colgroup>
   <thead class="bg-gray-200">
     <tr>
@@ -34,13 +34,9 @@
       <td class="p-3 align-middle">
         <div class="flex justify-center gap-2 whitespace-nowrap">
           <button onclick="approveStaff({{ req.user.id }})"
-                  class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded">
-            Approve
-          </button>
+                  class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded">Approve</button>
           <button onclick="rejectStaff({{ req.user.id }})"
-                  class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded">
-            Reject
-          </button>
+                  class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded">Reject</button>
         </div>
       </td>
     </tr>
@@ -56,10 +52,10 @@
 <h2 class="text-xl font-semibold mb-2">Active Staff</h2>
 <table class="table-fixed w-full bg-white rounded shadow">
   <colgroup>
-    <col class="w-2/5">  {# Name #}
-    <col class="w-1/5">  {# Barangay #}
-    <col class="w-1/5">  {# Mobile #}
-    <col class="w-1/5">  {# Actions #}
+    <col class="w-2/5">{# Name #}
+    <col class="w-1/5">{# Barangay #}
+    <col class="w-1/5">{# Mobile #}
+    <col class="w-1/5">{# Actions #}
   </colgroup>
   <thead class="bg-gray-200">
     <tr>
@@ -77,14 +73,10 @@
       <td class="p-3 align-middle font-mono whitespace-nowrap">{{ u.mobile_number }}</td>
       <td class="p-3 align-middle">
         <div class="flex justify-center gap-2 whitespace-nowrap">
-          <button onclick="viewTransactions({{ u.id }}, '{{ (u.get_full_name|default:u.username)|escapejs }}')"
-                  class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded">
-            View Transactions
-          </button>
+          <button onclick="viewTransactions({{ u.id }}, '{{ u.get_full_name|default:u.username|escapejs }}')"
+                  class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded">View Transactions</button>
           <button onclick="deleteStaff({{ u.id }})"
-                  class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded">
-            Delete
-          </button>
+                  class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded">Delete</button>
         </div>
       </td>
     </tr>
@@ -127,13 +119,9 @@ function rowHtmlActive(staff) {
       <td class="p-3 align-middle">
         <div class="flex justify-center gap-2 whitespace-nowrap">
           <button onclick="viewTransactions(${staff.id}, '${safeName}')"
-                  class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded">
-            View Transactions
-          </button>
+                  class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded">View Transactions</button>
           <button onclick="deleteStaff(${staff.id})"
-                  class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded">
-            Delete
-          </button>
+                  class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded">Delete</button>
         </div>
       </td>
     </tr>`;
