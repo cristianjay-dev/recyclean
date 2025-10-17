@@ -128,24 +128,18 @@ function rowHtmlActive(staff) {
 }
 
 function approveStaff(userId) {
-  fetch(`/admin/staff/${userId}/approve/`, {
-    method: "POST",
-    headers: { "X-CSRFToken": CSRF }
-  })
-  .then(r => r.json())
-  .then(data => {
-    if (data.success) {
+  postJson(`/staff-actions/${userId}/approve/`)
+    .then(() => {
       const row = document.getElementById(`staff-row-${userId}`);
-      const name = row?.querySelector('td:nth-child(1)')?.textContent?.trim() ?? '';
-      const brgy = row?.querySelector('td:nth-child(2)')?.textContent?.trim() ?? '';
-      const mobile = row?.querySelector('td:nth-child(3)')?.textContent?.trim() ?? '';
+      const name  = row?.querySelector('td:nth-child(1)')?.textContent?.trim() ?? '';
+      const brgy  = row?.querySelector('td:nth-child(2)')?.textContent?.trim() ?? '';
+      const mobile= row?.querySelector('td:nth-child(3)')?.textContent?.trim() ?? '';
       row?.remove();
 
       if (!document.querySelector("#pending-staff-body tr")) {
         document.getElementById("pending-staff-body").innerHTML =
           `<tr id="no-pending"><td colspan="4" class="p-3 text-gray-500 text-center">No pending staff.</td></tr>`;
       }
-
       if (document.getElementById("no-active")) {
         document.getElementById("no-active").remove();
       }
@@ -153,56 +147,36 @@ function approveStaff(userId) {
         .insertAdjacentHTML("beforeend", rowHtmlActive({id:userId, name, barangay: brgy, mobile}));
 
       alert("✅ Staff approved successfully.");
-    } else {
-      alert(data.error || "Failed to approve staff.");
-    }
-  })
-  .catch(() => alert("Network error while approving."));
+    })
+    .catch(e => alert(`Approve failed: ${e.message}`));
 }
 
 function rejectStaff(userId) {
   if (!confirm("Reject this staff application?")) return;
-  fetch(`/admin/staff/${userId}/reject/`, {
-    method: "POST",
-    headers: { "X-CSRFToken": CSRF }
-  })
-  .then(r => r.json())
-  .then(data => {
-    if (data.success) {
+  postJson(`/staff-actions/${userId}/reject/`)
+    .then(() => {
       document.getElementById(`staff-row-${userId}`)?.remove();
       if (!document.querySelector("#pending-staff-body tr")) {
         document.getElementById("pending-staff-body").innerHTML =
           `<tr id="no-pending"><td colspan="4" class="p-3 text-gray-500 text-center">No pending staff.</td></tr>`;
       }
       alert("❌ Staff rejected successfully.");
-    } else {
-      alert(data.error || "Failed to reject staff.");
-    }
-  })
-  .catch(() => alert("Network error while rejecting."));
+    })
+    .catch(e => alert(`Reject failed: ${e.message}`));
 }
 
 function deleteStaff(userId) {
   if (!confirm("Delete this staff account? This cannot be undone.")) return;
-  // Reuse the same reject endpoint to hard-delete the user
-  fetch(`/admin/staff/${userId}/reject/`, {
-    method: "POST",
-    headers: { "X-CSRFToken": CSRF }
-  })
-  .then(r => r.json())
-  .then(data => {
-    if (data.success) {
+  postJson(`/staff-actions/${userId}/reject/`)
+    .then(() => {
       document.getElementById(`active-row-${userId}`)?.remove();
       if (!document.querySelector("#active-staff-body tr")) {
         document.getElementById("active-staff-body").innerHTML =
           `<tr id="no-active"><td colspan="4" class="p-3 text-gray-500 text-center">No active staff.</td></tr>`;
       }
       alert("🗑️ Staff deleted successfully.");
-    } else {
-      alert(data.error || "Failed to delete staff.");
-    }
-  })
-  .catch(() => alert("Network error while deleting."));
+    })
+    .catch(e => alert(`Delete failed: ${e.message}`));
 }
 
 function viewTransactions(staffId, name) {
