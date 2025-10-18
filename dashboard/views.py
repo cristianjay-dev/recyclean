@@ -1554,16 +1554,46 @@ class ChangePasswordView(views.APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [permissions.IsAuthenticated]
 
+    def _first_error_text(self, errors):
+        """
+        Flatten DRF serializer errors into a single human message.
+        Examples:
+          {"non_field_errors": ["Old password is incorrect."]}
+          {"new_password": ["New password must be at least 8 characters."]}
+        """
+        if isinstance(errors, dict):
+            for key in ("non_field_errors", "detail"):
+                if key in errors:
+                    vals = errors[key]
+                    if isinstance(vals, (list, tuple)) and vals:
+                        return str(vals[0])
+                    return str(vals)
+
+            # otherwise pick first field’s first message
+            for vals in errors.values():
+                if isinstance(vals, (list, tuple)) and vals:
+                    return str(vals[0])
+                if isinstance(vals, str):
+                    return vals
+        # fallback
+        return "Invalid input."
+
     def post(self, request):
         ser = ChangePasswordSerializer(data=request.data, context={"request": request})
-        ser.is_valid(raise_exception=True)
+        if not ser.is_valid():
+            msg = self._first_error_text(ser.errors)
+            return Response({"success": False, "error": msg}, status=400)
+
         u: User = request.user
         u.set_password(ser.validated_data["new_password"])
         u.save(update_fields=["password"])
-        # rotate token so old token can’t be reused
+
+        # rotate token so the old one can’t be reused
         Token.objects.filter(user=u).delete()
         token = Token.objects.create(user=u)
+
         return Response({"success": True, "message": "Password changed.", "token": token.key})
+
 
 
 
