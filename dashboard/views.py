@@ -1949,7 +1949,8 @@ def staff_transaction_history(request, staff_id: int):
         sub_dict = None
         if sub:
             qr_url = request.build_absolute_uri(
-                reverse("submission-qr", args=[sub.id])
+                reverse("submission_qr", args=[sub.id])
+
             )
             # so staff mobile can fetch the PNG without cookie/session
             if admin_key:

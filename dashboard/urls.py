@@ -66,7 +66,7 @@ urlpatterns = [
     path("api/submissions/claim/", views.SubmissionClaimView.as_view(), name="submission_claim"),
 
     # ------------------ Staff activity -------------------------------
-    path("api/staff/<int:staff_id>/transactions/", views.staff_transaction_history, name="staff_transaction_history"),\
+    path("api/staff/<int:staff_id>/transactions/", views.staff_transaction_history, name="staff_transaction_history"),
 
     # ------------------ User dashboard data --------------------------
     path("api/user/<int:user_id>/", views.get_user_details, name="get_user_details"),
