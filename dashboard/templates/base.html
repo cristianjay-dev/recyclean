@@ -1,14 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
   <title>RecyClean Admin</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdn.tailwindcss.com"></script>
 
   <script>
-    // ---- CSRF helpers available to all pages ----
     (function () {
       function getCookie(name) {
         const value = `; ${document.cookie}`;
@@ -17,27 +15,22 @@
         return null;
       }
       window.CSRF = getCookie('csrftoken');
-
       window.postJson = async function postJson(url, body = null, extraHeaders = {}) {
         const isFormData = body instanceof FormData;
         const isJsonBody = body !== null && !isFormData;
-
         const headers = Object.assign(
           { "X-CSRFToken": window.CSRF || "" },
           isJsonBody ? { "Content-Type": "application/json" } : {},
           extraHeaders
         );
-
         const res = await fetch(url, {
           method: "POST",
           credentials: "same-origin",
           headers,
           body: isJsonBody ? JSON.stringify(body) : body
         });
-
         const ct = res.headers.get("content-type") || "";
         const data = ct.includes("application/json") ? await res.json() : { error: await res.text() };
-
         if (!res.ok || data.success === false) {
           const msg = (data && (data.error || data.detail)) || `${res.status} ${res.statusText}`;
           throw new Error(msg);
@@ -52,48 +45,40 @@
   <div class="flex min-h-screen">
     <!-- Sidebar (locked width) -->
     {% with nm=request.resolver_match.url_name %}
-    {% with is_submissions=(nm == 'dropoff_sites_view' or nm == 'dropoff_site_detail' or nm == 'submissions_by_dropoff_site') %}
     <aside class="shrink-0 w-64 min-w-[16rem] bg-gray-800 text-white flex flex-col p-4 space-y-4 sticky top-0 h-screen">
       <h2 class="text-2xl font-bold mb-6">RecyClean</h2>
 
       <nav class="flex flex-col space-y-2">
         <a href="{% url 'dashboard' %}"
-           class="px-3 py-2 rounded transition-colors
-                  {% if nm == 'dashboard' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
+           class="px-3 py-2 rounded {% if nm == 'dashboard' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
           Dashboard
         </a>
 
-        <!-- “Submissions” (covers list and detail pages) -->
         <a href="{% url 'dropoff_sites_view' %}"
-           class="px-3 py-2 rounded transition-colors
-                  {% if is_submissions %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
+           class="px-3 py-2 rounded {% if nm == 'dropoff_sites_view' or nm == 'dropoff_site_detail' or nm == 'submissions_by_dropoff_site' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
           Submissions
         </a>
 
         <a href="{% url 'staff_management_view' %}"
-           class="px-3 py-2 rounded transition-colors
-                  {% if nm == 'staff_management_view' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
+           class="px-3 py-2 rounded {% if nm == 'staff_management_view' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
           Staff Management
         </a>
 
         <a href="{% url 'reward_requests' %}"
-           class="px-3 py-2 rounded transition-colors
-                  {% if nm == 'reward_requests' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
+           class="px-3 py-2 rounded {% if nm == 'reward_requests' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
           Rewards
         </a>
 
         <a href="{% url 'diy_dashboard' %}"
-           class="px-3 py-2 rounded transition-colors
-                  {% if nm == 'diy_dashboard' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
+           class="px-3 py-2 rounded {% if nm == 'diy_dashboard' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
           DIY Tutorials
         </a>
       </nav>
     </aside>
     {% endwith %}
-    {% endwith %}
 
     <!-- Main Content -->
-    <main class="flex-1 p-6 overflow-x-auto">
+    <main class="flex-1 p-6">
       {% block content %}{% endblock %}
     </main>
   </div>
