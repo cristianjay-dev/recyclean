@@ -2125,22 +2125,30 @@ def dropoff_site_detail(request, site_id: int):
     period = (request.GET.get("period") or "week").lower()
     start_d, end_d, period_key, labels = _period_bounds(period)
 
-    submissions_qs = Submission.objects.filter(
-        dropoff_site=site,
-        created_at__date__gte=start_d,
-        created_at__date__lt=end_d
-    ).select_related("staff", "claimed_by").order_by("-created_at")
+    # Base queryset WITHOUT select_related; use it for aggregates/light reads
+    base_qs = (
+        Submission.objects
+        .filter(
+            dropoff_site=site,
+            created_at__date__gte=start_d,
+            created_at__date__lt=end_d
+        )
+        .order_by("-created_at")
+    )
+
+    # Table queryset WITH select_related; no .only() calls here
+    submissions = base_qs.select_related("staff", "claimed_by")
 
     # Totals (over selected period)
-    total_submissions = submissions_qs.count()
-    total_points = submissions_qs.aggregate(total=Sum("claimed_points"))["total"] or 0
+    total_submissions = base_qs.count()
+    total_points = base_qs.aggregate(total=Sum("claimed_points"))["total"] or 0
 
-    # Bottle distribution
+    # Bottle distribution (read just the JSON field, no select_related needed)
     from collections import Counter
     counter = Counter()
     total_bottles = 0
-    for sub in submissions_qs.only("bottle_data"):
-        for b in sub.bottle_data or []:
+    for bdata in base_qs.values_list("bottle_data", flat=True):
+        for b in (bdata or []):
             size = (b.get("size") or "unknown").lower()
             try:
                 cnt = int(b.get("count") or b.get("quantity") or 0)
@@ -2154,26 +2162,22 @@ def dropoff_site_detail(request, site_id: int):
 
     # Time-series counts for chart
     series_labels = labels
-    series_values = []
     if period_key == "year":
-        # build a dict for YYYY-MM → count
-        from calendar import monthrange
-        counts_by_month = {}
-        for y_m in labels:
-            counts_by_month[y_m] = 0
-        for dct in submissions_qs.values("created_at"):
-            dt = localtime(dct["created_at"]).date()
-            key = f"{dt.year}-{dt.month:02d}"
+        counts_by_month = {lbl: 0 for lbl in labels}
+        for dt in base_qs.values_list("created_at", flat=True):
+            d = localtime(dt).date()
+            key = f"{d.year}-{d.month:02d}"
             if key in counts_by_month:
                 counts_by_month[key] += 1
         series_values = [counts_by_month[k] for k in labels]
     else:
-        # daily
         from collections import Counter as C2
-        c = C2([localtime(s.created_at).date().strftime("%b %d") for s in submissions_qs.only("created_at")])
-        series_values = [c.get(lbl, 0) for lbl in labels]
-
-    submissions = submissions_qs  # for table
+        day_keys = [
+            localtime(dt).date().strftime("%b %d")
+            for dt in base_qs.values_list("created_at", flat=True)
+        ]
+        c = C2(day_keys)
+        series_values = [int(c.get(lbl, 0)) for lbl in labels]
 
     return render(
         request,
@@ -2182,7 +2186,7 @@ def dropoff_site_detail(request, site_id: int):
             "site": site,
             "staff_members": site_staff,
             "period": period_key,
-            "submissions": submissions,
+            "submissions": submissions,  # the table uses this
             "total_submissions": total_submissions,
             "total_points": total_points,
             "total_bottles": total_bottles,
@@ -2192,6 +2196,7 @@ def dropoff_site_detail(request, site_id: int):
             "bottle_values": json.dumps(bottle_values),
         },
     )
+
 
 @api_view(["GET"])
 @authentication_classes([TokenAuthentication, SessionAuthentication, BasicAuthentication])
