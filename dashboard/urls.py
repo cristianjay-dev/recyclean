@@ -12,9 +12,10 @@ urlpatterns = [
 
     # ------------------ Submissions / Drop-off Sites (server-rendered)
     # Canonical paths used by the sidebar
-    path("submissions/", views.dropoff_sites_view, name="dropoff_sites_view"),
+    path("submissions/", views.submissions_admin_view, name="dropoff_sites_view"),
     path("submissions/<int:site_id>/", views.dropoff_site_detail, name="dropoff_site_detail"),
     path("submissions/<int:site_id>/submissions/", views.submissions_by_dropoff_site, name="submissions_by_dropoff_site"),
+
 
     # CSV exports (canonical)
     path("submissions/export.csv", views.export_all_submissions_csv, name="export_all_submissions_csv"),
@@ -24,9 +25,8 @@ urlpatterns = [
     path("submissions/<int:site_id>/delete/", views.delete_dropoff_site, name="delete_dropoff_site"),
 
     # ---- Legacy aliases (kept for back-compat; safe to remove later) ----
-    path("dropoff-sites/", views.dropoff_sites_view, name="dropoff_sites_view_legacy"),
+    path("dropoff-sites/", views.submissions_admin_view, name="dropoff_sites_alias"),
     path("dropoff-sites/<int:site_id>/", views.dropoff_site_detail, name="dropoff_site_detail_legacy"),
-    path("dropoff-sites/<int:site_id>/submissions/", views.submissions_by_dropoff_site, name="submissions_by_dropoff_site_legacy"),
     path("dropoff-sites/<int:site_id>/export.csv", views.export_site_submissions_csv, name="export_site_submissions_csv_legacy"),
     path("exports/submissions.csv", views.export_all_submissions_csv, name="export_all_submissions_csv_legacy"),
     path("delete-dropoff-site/<int:site_id>/", views.delete_dropoff_site, name="delete_dropoff_site_legacy"),
