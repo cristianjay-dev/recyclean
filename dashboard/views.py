@@ -34,8 +34,8 @@ from rest_framework.decorators import api_view, permission_classes, parser_class
 from rest_framework.authtoken.models import Token
 from rest_framework.authentication import TokenAuthentication, SessionAuthentication, BasicAuthentication
 from rest_framework.permissions import BasePermission
+from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
 
-from rest_framework.parsers import JSONParser, MultiPartParser
 from rest_framework.response import Response
 from urllib.parse import urlparse, parse_qs
 from decimal import Decimal, ROUND_HALF_UP
@@ -1549,49 +1549,48 @@ class MeView(views.APIView):
         })
 
 
-
 class ChangePasswordView(views.APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [JSONParser, FormParser, MultiPartParser]  # accept common bodies
 
     def _first_error_text(self, errors):
         """
         Flatten DRF serializer errors into a single human message.
-        Examples:
+        Handles:
           {"non_field_errors": ["Old password is incorrect."]}
+          {"old_password": ["Old password is incorrect."]}
           {"new_password": ["New password must be at least 8 characters."]}
+          {"detail": "Invalid token."}
         """
         if isinstance(errors, dict):
-            for key in ("non_field_errors", "detail"):
+            # common keys first
+            for key in ("non_field_errors", "detail", "old_password", "new_password"):
                 if key in errors:
-                    vals = errors[key]
-                    if isinstance(vals, (list, tuple)) and vals:
-                        return str(vals[0])
-                    return str(vals)
-
-            # otherwise pick first field’s first message
-            for vals in errors.values():
-                if isinstance(vals, (list, tuple)) and vals:
-                    return str(vals[0])
-                if isinstance(vals, str):
-                    return vals
-        # fallback
+                    val = errors[key]
+                    if isinstance(val, (list, tuple)) and val:
+                        return str(val[0])
+                    return str(val)
+            # else pick the first field error
+            for val in errors.values():
+                if isinstance(val, (list, tuple)) and val:
+                    return str(val[0])
+                if isinstance(val, str):
+                    return val
         return "Invalid input."
 
     def post(self, request):
         ser = ChangePasswordSerializer(data=request.data, context={"request": request})
         if not ser.is_valid():
-            msg = self._first_error_text(ser.errors)
-            return Response({"success": False, "error": msg}, status=400)
+            return Response({"success": False, "error": self._first_error_text(ser.errors)}, status=400)
 
         u: User = request.user
         u.set_password(ser.validated_data["new_password"])
         u.save(update_fields=["password"])
 
-        # rotate token so the old one can’t be reused
+        # rotate token so old token can’t be reused
         Token.objects.filter(user=u).delete()
         token = Token.objects.create(user=u)
-
         return Response({"success": True, "message": "Password changed.", "token": token.key})
 
 
