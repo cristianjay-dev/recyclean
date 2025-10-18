@@ -35,11 +35,17 @@
 <div class="flex items-center gap-2 mb-4">
   {% with current=period|default:"week" %}
     <a href="?period=week"
-       class="px-3 py-1 rounded border {{ current == 'week'|yesno:'bg-blue-600 text-white,bg-white text-gray-700' }}">Week</a>
+       class="px-3 py-1 rounded border {% if current == 'week' %}bg-blue-600 text-white{% else %}bg-white text-gray-700{% endif %}">
+      Week
+    </a>
     <a href="?period=month"
-       class="px-3 py-1 rounded border {{ current == 'month'|yesno:'bg-blue-600 text-white,bg-white text-gray-700' }}">Month</a>
+       class="px-3 py-1 rounded border {% if current == 'month' %}bg-blue-600 text-white{% else %}bg-white text-gray-700{% endif %}">
+      Month
+    </a>
     <a href="?period=year"
-       class="px-3 py-1 rounded border {{ current == 'year'|yesno:'bg-blue-600 text-white,bg-white text-gray-700' }}">Year</a>
+       class="px-3 py-1 rounded border {% if current == 'year' %}bg-blue-600 text-white{% else %}bg-white text-gray-700{% endif %}">
+      Year
+    </a>
   {% endwith %}
 
   <span class="ml-3 text-sm text-gray-500">Quick export:</span>
@@ -109,13 +115,29 @@
         <td class="px-4 py-2 border">
           {% if sub.claimed_by %}{{ sub.claimed_by.get_full_name|default:sub.claimed_by.username }}{% else %}<span class="text-gray-500">Unclaimed</span>{% endif %}
         </td>
+
+        {# Small count: prints the matching value if present; otherwise stays blank (or 0 if bottle_data is empty) #}
         <td class="px-4 py-2 border">
-          {% with s=0 %}{% for b in sub.bottle_data %}{% if b.size == 'small' %}{% firstof %}{% endif %}{% endfor %}{% endwith %}
-          {% with val=0 %}{% for b in sub.bottle_data %}{% if b.size == 'small' %}{% widthratio b.count|default:b.quantity 1 1 as val %}{{ b.count|default:b.quantity }}{% endif %}{% endfor %}{% if not val %}0{% endif %}{% endwith %}
+          {% for b in sub.bottle_data %}
+            {% if b.size == 'small' %}
+              {{ b.count|default:b.quantity }}
+            {% endif %}
+          {% empty %}
+            0
+          {% endfor %}
         </td>
+
+        {# Large count #}
         <td class="px-4 py-2 border">
-          {% with val=0 %}{% for b in sub.bottle_data %}{% if b.size == 'large' %}{% widthratio b.count|default:b.quantity 1 1 as val %}{{ b.count|default:b.quantity }}{% endif %}{% endfor %}{% if not val %}0{% endif %}{% endwith %}
+          {% for b in sub.bottle_data %}
+            {% if b.size == 'large' %}
+              {{ b.count|default:b.quantity }}
+            {% endif %}
+          {% empty %}
+            0
+          {% endfor %}
         </td>
+
         <td class="px-4 py-2 border">{{ sub.proposed_points|default:0 }}</td>
         <td class="px-4 py-2 border">{{ sub.claimed_points|default:0 }}</td>
         <td class="px-4 py-2 border capitalize">{{ sub.status }}</td>
@@ -159,7 +181,10 @@
     },
     options: {
       responsive: true,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${c.raw} submissions` } } },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (c) => `${c.raw} submissions` } }
+      },
       scales: { y: { beginAtZero: true } }
     }
   });
@@ -167,13 +192,44 @@
   // Bottle Size Distribution Chart
   new Chart(document.getElementById('bottleChart'), {
     type: 'bar',
-    data: { labels: bottleLabels, datasets: [{ label: 'Quantity', data: bottleValues, backgroundColor: ['rgba(59,130,246,.6)','rgba(16,185,129,.6)','rgba(245,158,11,.6)','rgba(239,68,68,.6)','rgba(99,102,241,.6)'], borderColor: '#fff', borderWidth: 1 }] },
+    data: {
+      labels: bottleLabels,
+      datasets: [{
+        label: 'Quantity',
+        data: bottleValues,
+        backgroundColor: [
+          'rgba(59, 130, 246, 0.6)',
+          'rgba(16, 185, 129, 0.6)',
+          'rgba(245, 158, 11, 0.6)',
+          'rgba(239, 68, 68, 0.6)',
+          'rgba(99, 102, 241, 0.6)'
+        ],
+        borderColor: '#fff',
+        borderWidth: 1
+      }]
+    },
     options: {
       responsive: true,
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: { label: (ctx) => { const v=ctx.raw; const p=((v/totalBottles)*100).toFixed(1); return `${v} bottles (${p}%)`; } } },
-        datalabels: { anchor: 'end', align: 'top', formatter: (v)=>{ const p=((v/totalBottles)*100).toFixed(1); return `${v} (${p}%)`; }, font: { weight: 'bold' } }
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const v = ctx.raw;
+              const p = ((v / totalBottles) * 100).toFixed(1);
+              return `${v} bottles (${p}%)`;
+            }
+          }
+        },
+        datalabels: {
+          anchor: 'end',
+          align: 'top',
+          formatter: (v) => {
+            const p = ((v / totalBottles) * 100).toFixed(1);
+            return `${v} (${p}%)`;
+          },
+          font: { weight: 'bold' }
+        }
       },
       scales: { y: { beginAtZero: true } }
     },
@@ -192,7 +248,7 @@
   }
   // presets that mirror the same ranges your view uses
   function presetAndExport(kind){
-    const today = new Date(); // local
+    const today = new Date();
     const to = new Date(today.getFullYear(), today.getMonth(), today.getDate()); // midnight today
     let from = new Date(to);
     if (kind === 'week') from.setDate(to.getDate() - 6);
