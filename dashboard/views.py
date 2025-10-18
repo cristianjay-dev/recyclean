@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import secrets
+
 import re
 from datetime import datetime, timedelta, date
 from functools import wraps
@@ -13,6 +14,7 @@ from typing import List, Dict, Tuple
 from collections import Counter
 import cv2
 import numpy as np
+from django.urls import reverse
 from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import Group
@@ -1891,20 +1893,62 @@ def submissions_by_dropoff_site(request, site_id: int):
     return render(request, "submissions_by_site.html", {"site": site, "submissions": submissions})
 
 
+
 @api_view(["GET"])
 @permission_classes([IsStaffish])
 def staff_transaction_history(request, staff_id: int):
-    txs = StaffTransaction.objects.filter(staff_id=staff_id).select_related("submission").order_by("-created_at")
-    data = [
-        {
-            "action": t.action,
-            "notes": t.notes,
-            "points": getattr(t.submission, "claimed_points", 0),
+    """
+    GET /api/staff/<staff_id>/transactions/
+    Returns newest-first history with submission details + QR URL.
+    """
+    # verify staff exists
+    staff = get_object_or_404(User, pk=staff_id)
+
+    # if you configured ADMIN_SHARED_KEY, include it so the mobile app can open the PNG
+    admin_key = getattr(settings, "ADMIN_SHARED_KEY", None)
+
+    txs = (
+        StaffTransaction.objects
+        .filter(staff_id=staff_id)
+        .select_related("submission")
+        .order_by("-created_at")
+    )
+
+    items = []
+    for t in txs:
+        sub = t.submission
+        sub_dict = None
+        if sub:
+            qr_url = request.build_absolute_uri(
+                reverse("submission-qr", args=[sub.id])
+            )
+            # so staff mobile can fetch the PNG without cookie/session
+            if admin_key:
+                join = "&" if "?" in qr_url else "?"
+                qr_url = f"{qr_url}{join}admin_key={admin_key}"
+
+            sub_dict = {
+                "id": sub.id,
+                "status": sub.status,  # pending | claimed | expired
+                "created_at": localtime(sub.created_at).isoformat(),
+                "claimed_at": (localtime(sub.claimed_at).isoformat() if sub.claimed_at else None),
+                "qr_expires_at": (localtime(sub.qr_expires_at).isoformat() if sub.qr_expires_at else None),
+                "claimed_points": int(sub.claimed_points or 0),
+                "proposed_points": int(sub.proposed_points or 0),
+                "bottle_data": sub.bottle_data or [],
+                "qr_url": qr_url,  # PNG
+            }
+
+        items.append({
+            "action": t.action,                # e.g. "submission_created"
+            "notes": t.notes or "",
+            "points": int(getattr(sub, "claimed_points", 0) or 0),
             "date": timezone.localtime(t.created_at).strftime("%Y-%m-%d %H:%M"),
-        }
-        for t in txs
-    ]
-    return Response({"success": True, "transactions": data})
+            "submission": sub_dict,
+        })
+
+    return Response({"success": True, "transactions": items})
+
 
 
 def _period_bounds(param: str) -> Tuple[date, date, str, List[str]]:
