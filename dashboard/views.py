@@ -1751,6 +1751,108 @@ def staff_metrics(request, staff_id: int):
         }
     })
 
+from datetime import datetime as _dt
+
+@api_view(["GET"])
+@permission_classes([IsStaffish])
+def staff_monitor(request, staff_id: int):
+    """
+    GET /api/staff/monitor/<staff_id>/?from=YYYY-MM-DD&to=YYYY-MM-DD
+    Returns:
+      {
+        "success": true,
+        "size_counts": {"small": 0, "large": 0},
+        "recent": [
+          {
+            "id": 123,
+            "created_at": "2025-10-18T10:05:00+08:00",
+            "resident": "Juan D.",
+            "points": 30,
+            "status": "claimed",
+            "bottles": [{"size":"small","count":2},{"size":"large","count":1}]
+          },
+          ...
+        ]
+      }
+    """
+    # ensure staff exists
+    staff = get_object_or_404(User, pk=staff_id)
+
+    # --- bounds (defaults to this week if not provided) ---
+    def _parse_date(s: str):
+        try:
+            return _dt.strptime(s, "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+    date_from = _parse_date(request.GET.get("from", ""))
+    date_to   = _parse_date(request.GET.get("to", ""))
+
+    if not date_from or not date_to or date_from >= date_to:
+        # default to Monday..next Monday
+        today = today_ph()
+        sow = today - timedelta(days=today.weekday())  # Monday
+        date_from = sow
+        date_to   = sow + timedelta(days=7)
+
+    # --- query submissions CREATED by this staff within window ---
+    qs = (
+        Submission.objects
+        .filter(
+            staff_id=staff_id,
+            created_at__date__gte=date_from,
+            created_at__date__lt=date_to,
+        )
+        .select_related("claimed_by")
+        .only("id","created_at","bottle_data","claimed_points","status","claimed_by__first_name","claimed_by__last_name")
+        .order_by("-created_at")
+    )
+
+    # --- aggregate small/large ---
+    small = large = 0
+    def _sum_sizes(bdata):
+        s = l = 0
+        for it in (bdata or []):
+            size = (it.get("size") or "").lower()
+            try:
+                cnt = int(it.get("count") or it.get("quantity") or 0)
+            except Exception:
+                cnt = 0
+            if size == "small": s += cnt
+            elif size == "large": l += cnt
+        return s, l
+
+    recent = []
+    for sub in qs:
+        s, l = _sum_sizes(sub.bottle_data)
+        small += s
+        large += l
+        resident_name = sub.claimed_by.get_full_name() if sub.claimed_by_id else "Resident"
+        recent.append({
+            "id": sub.id,
+            "created_at": localtime(sub.created_at).isoformat(),
+            "resident": resident_name or "Resident",
+            "points": int(sub.claimed_points or 0),
+            "status": sub.status,
+            "bottles": [
+                {"size": "small", "count": s},
+                {"size": "large", "count": l},
+            ],
+        })
+
+    return Response({
+        "success": True,
+        "size_counts": {"small": small, "large": large},
+        "recent": recent,   # already newest-first
+        "from": str(date_from),
+        "to": str(date_to),
+        "staff": {
+            "id": staff.id,
+            "name": staff.get_full_name(),
+            "barangay": staff.barangay.name if staff.barangay else None,
+        }
+    })
+
 
 @require_staff_json
 def dropoff_sites_view(request):

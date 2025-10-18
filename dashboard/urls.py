@@ -28,6 +28,7 @@ urlpatterns = [
     path("staff-management/", views.staff_management_view, name="staff_management_view"),
     # add with the rest of your API paths
     path('api/staff/metrics/<int:staff_id>/', views.staff_metrics, name='staff_metrics'),
+    path("api/staff/monitor/<int:staff_id>/", views.staff_monitor, name="staff-monitor"),
 
     # urls.py
     #path("admin/staff/<int:user_id>/approve/", views.approve_staff_json, name="approve_staff_json"),
