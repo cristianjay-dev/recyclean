@@ -10,7 +10,7 @@ import re
 from datetime import datetime, timedelta, date
 from functools import wraps
 from typing import List, Dict, Tuple
-
+from collections import Counter
 import cv2
 import numpy as np
 from django.conf import settings
@@ -1676,6 +1676,82 @@ class SubmissionClaimView(views.APIView):
 # ==============================================================================
 # Staff & Site metrics / pages
 # ==============================================================================
+
+@api_view(["GET"])
+@permission_classes([IsStaffish])
+def staff_metrics(request, staff_id: int):
+    """
+    GET /api/staff/metrics/<staff_id>/?range=week|month|year
+    Returns totals for the selected period + a breakdown series,
+    and also an all-time total for a KPI card.
+    """
+    # Verify the staff exists (optional but clearer errors)
+    staff = get_object_or_404(User, pk=staff_id)
+
+    # period bounds + labels (reuse your helper)
+    rng = (request.GET.get("range") or "week").lower()
+    start_d, end_d, period_key, labels = _period_bounds(rng)
+
+    # Submissions CREATED by this staff in the window
+    qs = Submission.objects.filter(
+        staff_id=staff_id,
+        created_at__date__gte=start_d,
+        created_at__date__lt=end_d,
+    ).only("id", "created_at", "bottle_data", "claimed_points")
+
+    # Totals in range
+    total_submissions = qs.count()
+
+    # bottles (small+large) in range
+    def _sum_bottles(bdata):
+        small = large = 0
+        for it in bdata or []:
+            size = (it.get("size") or "").lower()
+            try:
+                cnt = int(it.get("count") or it.get("quantity") or 0)
+            except Exception:
+                cnt = 0
+            if size == "small": small += cnt
+            elif size == "large": large += cnt
+        return small + large
+
+    total_plastic_count = 0
+    # Pre-collect dates for series
+    if period_key == "year":
+        # yyyy-mm buckets
+        counts_by_month = {lbl: 0 for lbl in labels}
+        for s in qs:
+            dt = localtime(s.created_at).date()
+            key = f"{dt.year}-{dt.month:02d}"
+            if key in counts_by_month:
+                counts_by_month[key] += 1
+            total_plastic_count += _sum_bottles(s.bottle_data)
+        breakdown = [{"label": k, "value": counts_by_month[k]} for k in labels]
+    else:
+        # daily buckets using "%b %d"
+        c = Counter([localtime(s.created_at).date().strftime("%b %d") for s in qs])
+        for s in qs:
+            total_plastic_count += _sum_bottles(s.bottle_data)
+        breakdown = [{"label": lbl, "value": int(c.get(lbl, 0))} for lbl in labels]
+
+    # Lifetime / all-time submissions by this staff
+    lifetime_submissions = Submission.objects.filter(staff_id=staff_id).count()
+
+    return Response({
+        "success": True,
+        "range": period_key,                     # week|month|year
+        "total_submissions": total_submissions,  # in-range
+        "total_plastic_count": total_plastic_count,  # in-range (pcs)
+        "breakdown": breakdown,                  # [{label, value}]
+        "lifetime_submissions": lifetime_submissions,  # all-time KPI
+        "staff": {
+            "id": staff.id,
+            "name": staff.get_full_name(),
+            "barangay": staff.barangay.name if staff.barangay else None,
+        }
+    })
+
+
 @require_staff_json
 def dropoff_sites_view(request):
     # M2M: prefetch staff_members
