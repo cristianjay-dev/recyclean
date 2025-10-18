@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- Header -->
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold">Submissions</h1>
+
+  <!-- Export ALL sites (with optional date range) -->
+  <form onsubmit="return exportAllCSV();" class="flex items-center gap-2">
+    <input type="date" id="all_from" class="border rounded px-2 py-2" placeholder="From">
+    <input type="date" id="all_to"   class="border rounded px-2 py-2" placeholder="To">
+    <button class="bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700">
+      Export All Submissions (CSV)
+    </button>
+  </form>
+</div>
+
+<!-- Points configuration -->
+<div class="bg-white rounded shadow p-4 mb-6">
+  <h2 class="text-lg font-semibold mb-3">Points per Bottle</h2>
+  <form method="post" class="flex flex-wrap items-end gap-3">
+    {% csrf_token %}
+    <div>
+      <label class="block text-sm text-gray-600 mb-1">Small bottle points</label>
+      <input name="small" type="number" min="0" value="{{ cfg.small_bottle_points }}"
+             class="border rounded px-3 py-2 w-28">
+    </div>
+    <div>
+      <label class="block text-sm text-gray-600 mb-1">Large bottle points</label>
+      <input name="large" type="number" min="0" value="{{ cfg.large_bottle_points }}"
+             class="border rounded px-3 py-2 w-28">
+    </div>
+    <button class="bg-blue-600 text-white px-3 py-2 rounded hover:bg-blue-700">
+      Save
+    </button>
+    {% if cfg.updated_at %}
+      <span class="text-sm text-gray-500">Last updated: {{ cfg.updated_at|date:"Y-m-d H:i" }}</span>
+    {% endif %}
+  </form>
+</div>
+
+<!-- Sites table -->
+<div class="bg-white rounded shadow overflow-x-auto">
+  <table class="min-w-full">
+    <thead class="bg-gray-200">
+      <tr>
+        <th class="text-left p-3">Barangay</th>
+        <th class="text-left p-3">Staff (count)</th>
+        <th class="text-left p-3">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for site in sites %}
+      <tr class="border-t hover:bg-gray-50">
+        <!-- Clickable barangay → detail page -->
+        <td class="p-3">
+          <a href="{% url 'dropoff_site_detail' site.id %}" class="text-blue-700 hover:underline">
+            {{ site.barangay.name|default:site.barangay }}
+          </a>
+        </td>
+
+        <!-- Staff list & count -->
+        <td class="p-3">
+          {% with members=site.staff_members.all %}
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="inline-flex items-center text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded-full">
+                {{ members|length }} staff
+              </span>
+              {% for m in members %}
+                <span class="px-2 py-1 bg-gray-100 rounded text-sm">
+                  {{ m.get_full_name|default:m.username }}
+                </span>
+              {% empty %}
+                <span class="text-gray-500 italic">Unassigned</span>
+              {% endfor %}
+            </div>
+          {% endwith %}
+        </td>
+
+        <!-- Actions: View / Export CSV (uses the same date range inputs at the top) -->
+        <td class="p-3">
+          <div class="flex items-center gap-2">
+            <a href="{% url 'dropoff_site_detail' site.id %}"
+               class="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">
+              View
+            </a>
+
+            <button onclick="exportSiteCSV({{ site.id }})"
+                    class="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
+              Export CSV
+            </button>
+          </div>
+        </td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="3" class="p-4 text-center text-gray-500">No drop-off sites yet.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+  function qs(v){ return encodeURIComponent(v || ""); }
+
+  function exportAllCSV(){
+    const f = document.getElementById('all_from').value;
+    const t = document.getElementById('all_to').value;
+    let url = "{% url 'export_all_submissions_csv' %}";
+    if (f || t) url += `?from=${qs(f)}&to=${qs(t)}`;
+    window.location.href = url;
+    return false;
+  }
+
+  function exportSiteCSV(siteId){
+    const f = document.getElementById('all_from').value;
+    const t = document.getElementById('all_to').value;
+    let url = "{% url 'export_site_submissions_csv' 0 %}".replace("0", siteId);
+    if (f || t) url += `?from=${qs(f)}&to=${qs(t)}`;
+    window.location.href = url;
+  }
+</script>
+
+{% endblock %}

@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>RecyClean Admin</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <script src="https://cdn.tailwindcss.com"></script>
 
@@ -16,25 +16,21 @@
         if (parts.length === 2) return decodeURIComponent(parts.pop().split(';').shift());
         return null;
       }
-
-      // Use cookie (works with ensure_csrf_cookie). Keep it simple/reliable.
       window.CSRF = getCookie('csrftoken');
 
-      // Generic POST helper that surfaces real server errors (JSON or HTML)
       window.postJson = async function postJson(url, body = null, extraHeaders = {}) {
         const isFormData = body instanceof FormData;
         const isJsonBody = body !== null && !isFormData;
 
         const headers = Object.assign(
           { "X-CSRFToken": window.CSRF || "" },
-          // only set content-type for JSON; FormData must not have it
           isJsonBody ? { "Content-Type": "application/json" } : {},
           extraHeaders
         );
 
         const res = await fetch(url, {
           method: "POST",
-          credentials: "same-origin",   // ensure cookies (CSRF) are sent
+          credentials: "same-origin",
           headers,
           body: isJsonBody ? JSON.stringify(body) : body
         });
@@ -51,43 +47,55 @@
     })();
   </script>
 </head>
-<body class="flex bg-gray-100 min-h-screen">
-  <!-- Sidebar -->
-  <aside class="w-64 bg-gray-800 text-white flex flex-col p-4 space-y-4">
-    <h2 class="text-2xl font-bold mb-6">RecyClean</h2>
 
-    <nav class="flex flex-col space-y-2">
-      <a href="{% url 'dashboard' %}"
-         class="px-3 py-2 rounded {% if request.resolver_match.url_name == 'dashboard' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
-        Dashboard
-      </a>
+<body class="bg-gray-100 min-h-screen">
+  <div class="flex min-h-screen">
+    <!-- Sidebar (locked width) -->
+    {% with nm=request.resolver_match.url_name %}
+    {% with is_submissions=(nm == 'dropoff_sites_view' or nm == 'dropoff_site_detail' or nm == 'submissions_by_dropoff_site') %}
+    <aside class="shrink-0 w-64 min-w-[16rem] bg-gray-800 text-white flex flex-col p-4 space-y-4 sticky top-0 h-screen">
+      <h2 class="text-2xl font-bold mb-6">RecyClean</h2>
 
-      <a href="{% url 'dropoff_sites_view' %}"
-         class="px-3 py-2 rounded {% if request.resolver_match.url_name == 'dropoff_sites_view' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
-        Drop-off Sites
-      </a>
+      <nav class="flex flex-col space-y-2">
+        <a href="{% url 'dashboard' %}"
+           class="px-3 py-2 rounded transition-colors
+                  {% if nm == 'dashboard' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
+          Dashboard
+        </a>
 
-      <a href="{% url 'staff_management_view' %}"
-         class="px-3 py-2 rounded {% if request.resolver_match.url_name == 'staff_management_view' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
-        Staff Management
-      </a>
+        <!-- “Submissions” (covers list and detail pages) -->
+        <a href="{% url 'dropoff_sites_view' %}"
+           class="px-3 py-2 rounded transition-colors
+                  {% if is_submissions %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
+          Submissions
+        </a>
 
-      <a href="{% url 'reward_requests' %}"
-         class="px-3 py-2 rounded {% if request.resolver_match.url_name == 'reward_requests' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
-        Rewards
-      </a>
+        <a href="{% url 'staff_management_view' %}"
+           class="px-3 py-2 rounded transition-colors
+                  {% if nm == 'staff_management_view' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
+          Staff Management
+        </a>
 
-      <!-- renamed from quiz_dashboard → diy_dashboard -->
-      <a href="{% url 'diy_dashboard' %}"
-         class="px-3 py-2 rounded {% if request.resolver_match.url_name == 'diy_dashboard' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
-        DIY Tutorials
-      </a>
-    </nav>
-  </aside>
+        <a href="{% url 'reward_requests' %}"
+           class="px-3 py-2 rounded transition-colors
+                  {% if nm == 'reward_requests' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
+          Rewards
+        </a>
 
-  <!-- Main Content -->
-  <main class="flex-grow p-6">
-    {% block content %}{% endblock %}
-  </main>
+        <a href="{% url 'diy_dashboard' %}"
+           class="px-3 py-2 rounded transition-colors
+                  {% if nm == 'diy_dashboard' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
+          DIY Tutorials
+        </a>
+      </nav>
+    </aside>
+    {% endwith %}
+    {% endwith %}
+
+    <!-- Main Content -->
+    <main class="flex-1 p-6 overflow-x-auto">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
 </body>
 </html>

@@ -1,7 +1,8 @@
+# forms.py
 from django import forms
 from django.contrib.auth.models import Group
 
-from .models import DIYTutorial, DropOffSite, User
+from .models import DIYTutorial, DropOffSite, User, PointsConfig
 
 
 # -------------------------------
@@ -66,8 +67,51 @@ class DIYTutorialForm(forms.ModelForm):
         return dur
 
 
+# -------------------------------------------------
+# "Submission" admin page — bottle points assignment
+# -------------------------------------------------
+class PointsConfigForm(forms.ModelForm):
+    """
+    Admin control for assigning how many points a small or large bottle earns.
+    This edits the singleton-like PointsConfig (use PointsConfig.current() in the view).
+    """
+    class Meta:
+        model = PointsConfig
+        fields = ["small_bottle_points", "large_bottle_points"]
+        labels = {
+            "small_bottle_points": "Small bottle points",
+            "large_bottle_points": "Large bottle points",
+        }
+        widgets = {
+            "small_bottle_points": forms.NumberInput(attrs={
+                "class": "w-full p-2 border rounded",
+                "min": 0,
+                "id": "id_small_bottle_points",
+                "step": 1,
+            }),
+            "large_bottle_points": forms.NumberInput(attrs={
+                "class": "w-full p-2 border rounded",
+                "min": 0,
+                "id": "id_large_bottle_points",
+                "step": 1,
+            }),
+        }
+
+    def clean_small_bottle_points(self):
+        v = self.cleaned_data.get("small_bottle_points") or 0
+        if v < 0:
+            raise forms.ValidationError("Must be ≥ 0.")
+        return v
+
+    def clean_large_bottle_points(self):
+        v = self.cleaned_data.get("large_bottle_points") or 0
+        if v < 0:
+            raise forms.ValidationError("Must be ≥ 0.")
+        return v
+
+
 # ---------------------------------
-# Drop-off Site (optional admin UI)
+# Drop-off Site (shown on Submission admin)
 # ---------------------------------
 class DropOffSiteForm(forms.ModelForm):
     class Meta:
@@ -81,7 +125,7 @@ class DropOffSiteForm(forms.ModelForm):
             "staff_members": forms.SelectMultiple(attrs={
                 "class": "w-full p-2 border rounded",
                 "id": "id_staff_members",
-                "size": 8,  # shows more rows; tweak as you like
+                "size": 8,
             }),
         }
 

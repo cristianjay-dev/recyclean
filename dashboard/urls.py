@@ -1,7 +1,5 @@
 from django.urls import path
 from django.http import HttpResponse
-from django.conf import settings
-from django.conf.urls.static import static
 from . import views
 
 urlpatterns = [
@@ -12,28 +10,35 @@ urlpatterns = [
     # ------------------ Image Processing (prototype) -----------------
     path("analyze/", views.analyze_image, name="analyze_image"),
 
-    # ------------------ Drop-off Sites (server-rendered) -------------
-    path("dropoff-sites/", views.dropoff_sites_view, name="dropoff_sites_view"),
-    path("dropoff-sites/<int:site_id>/", views.dropoff_site_detail, name="dropoff_site_detail"),
-    path("dropoff-sites/<int:site_id>/submissions/", views.submissions_by_dropoff_site, name="submissions_by_dropoff_site"),
+    # ------------------ Submissions / Drop-off Sites (server-rendered)
+    # Canonical paths used by the sidebar
+    path("submissions/", views.dropoff_sites_view, name="dropoff_sites_view"),
+    path("submissions/<int:site_id>/", views.dropoff_site_detail, name="dropoff_site_detail"),
+    path("submissions/<int:site_id>/submissions/", views.submissions_by_dropoff_site, name="submissions_by_dropoff_site"),
 
-    # CSV exports
-    path("exports/submissions.csv", views.export_all_submissions_csv, name="export_all_submissions_csv"),
-    path("dropoff-sites/<int:site_id>/export.csv", views.export_site_submissions_csv, name="export_site_submissions_csv"),
+    # CSV exports (canonical)
+    path("submissions/export.csv", views.export_all_submissions_csv, name="export_all_submissions_csv"),
+    path("submissions/<int:site_id>/export.csv", views.export_site_submissions_csv, name="export_site_submissions_csv"),
 
-    # Delete site
-    path("delete-dropoff-site/<int:site_id>/", views.delete_dropoff_site, name="delete_dropoff_site"),
+    # Delete site (canonical)
+    path("submissions/<int:site_id>/delete/", views.delete_dropoff_site, name="delete_dropoff_site"),
+
+    # ---- Legacy aliases (kept for back-compat; safe to remove later) ----
+    path("dropoff-sites/", views.dropoff_sites_view, name="dropoff_sites_view_legacy"),
+    path("dropoff-sites/<int:site_id>/", views.dropoff_site_detail, name="dropoff_site_detail_legacy"),
+    path("dropoff-sites/<int:site_id>/submissions/", views.submissions_by_dropoff_site, name="submissions_by_dropoff_site_legacy"),
+    path("dropoff-sites/<int:site_id>/export.csv", views.export_site_submissions_csv, name="export_site_submissions_csv_legacy"),
+    path("exports/submissions.csv", views.export_all_submissions_csv, name="export_all_submissions_csv_legacy"),
+    path("delete-dropoff-site/<int:site_id>/", views.delete_dropoff_site, name="delete_dropoff_site_legacy"),
 
     # ------------------ Staff Management (server-rendered) -----------
     path("staff-management/", views.staff_management_view, name="staff_management_view"),
-    # add with the rest of your API paths
-    path('api/staff/metrics/<int:staff_id>/', views.staff_metrics, name='staff_metrics'),
+
+    # ------------------ Staff Metrics APIs ---------------------------
+    path("api/staff/metrics/<int:staff_id>/", views.staff_metrics, name="staff_metrics"),
     path("api/staff/monitor/<int:staff_id>/", views.staff_monitor, name="staff-monitor"),
 
-    # urls.py
-    #path("admin/staff/<int:user_id>/approve/", views.approve_staff_json, name="approve_staff_json"),
-    #path("admin/staff/<int:user_id>/reject/",  views.reject_staff_json,  name="reject_staff_json"),
-    
+    # Approvals (JSON helpers for server pages)
     path("staff-actions/<int:user_id>/approve/", views.approve_staff_json, name="approve_staff_json"),
     path("staff-actions/<int:user_id>/reject/",  views.reject_staff_json,  name="reject_staff_json"),
 
@@ -46,8 +51,7 @@ urlpatterns = [
     path("api/utils/username-available/", views.username_available, name="username_available"),
     path("api/user/<int:user_id>/history/", views.user_history, name="user_history"),
 
-
-    # Barangays (support both with and without trailing slash + legacy alias)
+    # ------------------ Barangays -----------------------------------
     path("api/barangays/", views.list_barangays, name="list_barangays"),
     path("api/barangays", views.list_barangays, name="list_barangays_noslash"),
     path("api/geo/barangays/", views.list_barangays, name="list_barangays_legacy"),
@@ -74,16 +78,13 @@ urlpatterns = [
     # ------------------ Rewards (Reloadly) ---------------------------
     path("api/rewards/redeem/", views.RedeemRewardView.as_view(), name="redeem_reward"),
     path("webhooks/reloadly/", views.reloadly_webhook, name="reloadly_webhook"),
-
     path("api/utils/normalize-phone/", views.normalize_phone_ph, name="normalize_phone_ph"),
 
     # ------------------ DIY Tutorials (API) --------------------------
-    # Support with/without slash + back-compat alias
     path("api/diy/daily/", views.api_diy_daily, name="api_diy_daily"),
     path("api/diy/daily", views.api_diy_daily, name="api_diy_daily_noslash"),
     path("api/diy/daily/alias/", views.diy_daily, name="diy_daily"),
     path("api/diy/daily/alias", views.diy_daily, name="diy_daily_noslash"),
-
     path("api/diy/feature/", views.diy_feature_today, name="diy_feature_today"),
     path("api/diy/create/", views.diy_create_tutorial, name="diy_create_tutorial"),
     path("api/diy/<int:tutorial_id>/update/", views.diy_update_tutorial, name="diy_update_tutorial"),
@@ -93,13 +94,13 @@ urlpatterns = [
     # ------------------ DIY Tutorials (server-rendered) --------------
     path("diy/", views.diy_dashboard, name="diy_dashboard"),
 
-    # ------------------ Legacy aliases (optional) --------------------
+    # ------------------ Legacy auth aliases (optional) ---------------
     path("api/staff-signup/", views.StaffSignupView.as_view(), name="legacy_staff_signup"),
     path("api/staff-login/", views.StaffLoginView.as_view(), name="legacy_staff_login"),
     path("api/user-signup/", views.ResidentSignupView.as_view(), name="legacy_resident_signup"),
     path("api/user-login/", views.ResidentLoginView.as_view(), name="legacy_resident_login"),
     path("api/redeem-reward/", views.RedeemRewardView.as_view(), name="legacy_redeem_reward"),
 
-    # Simple health check (useful for connectivity tests)
+    # Simple health check
     path("health/", lambda r: HttpResponse("ok"), name="health"),
 ]

@@ -76,6 +76,33 @@ TWO_DP = Decimal("0.01")
 # Utilities
 # ==============================================================================
 
+# --- DropOffSite helpers ---
+
+def ensure_site_and_add_staff(barangay, staff_user: User):
+    """
+    Idempotently ensure a DropOffSite exists for the barangay,
+    and add the staff user to that site's staff_members.
+    """
+    if not barangay or not staff_user:
+        return
+    site, _ = DropOffSite.objects.get_or_create(barangay=barangay)
+    site.staff_members.add(staff_user)
+    # keep user's barangay in sync
+    if staff_user.barangay_id != barangay.id:
+        staff_user.barangay = barangay
+        staff_user.save(update_fields=["barangay"])
+
+
+def remove_staff_from_all_sites(staff_user: User):
+    """
+    Detach staff from any sites they’re assigned to.
+    """
+    if not staff_user:
+        return
+    for site in DropOffSite.objects.filter(staff_members=staff_user):
+        site.staff_members.remove(staff_user)
+
+
 def _is_real_staff(user) -> bool:
     return bool(
         user
@@ -293,36 +320,39 @@ class IsStaffish(BasePermission):
         return _is_real_staff(request.user)
 
 
-
-
 @require_POST
 @require_staff_json
 def approve_staff_json(request, user_id: int):
     staff = get_object_or_404(User, pk=user_id)
     req = StaffApprovalRequest.objects.filter(user=staff, status="pending").first()
 
-    # Approve
-    staff.is_approved = True
-    staff.is_active = True
-    staff.is_staff = True
-    staff.save(update_fields=["is_approved", "is_active", "is_staff"])
+    # Decide which barangay to bind:
+    barangay = req.requested_barangay if (req and req.requested_barangay) else staff.barangay
+    if not barangay:
+        return JsonResponse({"success": False, "error": "Requested barangay is required."}, status=400)
 
-    # Ensure group
-    staff_group = get_or_create_group("staff")
-    staff.groups.add(staff_group)
+    with transaction.atomic():
+        # Approve + mark as staff
+        staff.is_approved = True
+        staff.is_active = True
+        staff.is_staff = True
+        staff.save(update_fields=["is_approved", "is_active", "is_staff"])
 
-    # Ensure DropOffSite link by barangay
-    if staff.barangay:
-        site, _ = DropOffSite.objects.get_or_create(barangay=staff.barangay)
-        site.staff_members.add(staff)
+        # Ensure group
+        staff_group = get_or_create_group("staff")
+        staff.groups.add(staff_group)
 
-    if req:
-        req.status = "approved"
-        req.decided_by = request.user if request.user.is_authenticated else None
-        req.decided_at = timezone.now()
-        req.save(update_fields=["status", "decided_by", "decided_at"])
+        # Ensure site + attach staff (and sync user's barangay)
+        ensure_site_and_add_staff(barangay, staff)
+
+        if req:
+            req.status = "approved"
+            req.decided_by = request.user if request.user.is_authenticated else None
+            req.decided_at = timezone.now()
+            req.save(update_fields=["status", "decided_by", "decided_at"])
 
     return JsonResponse({"success": True})
+
 
 
 @require_POST
@@ -330,7 +360,6 @@ def approve_staff_json(request, user_id: int):
 def reject_staff_json(request, user_id: int):
     staff = get_object_or_404(User, pk=user_id)
     with transaction.atomic():
-        # Mark the approval request as rejected for audit (optional).
         req = StaffApprovalRequest.objects.filter(user=staff, status="pending").first()
         if req:
             req.status = "rejected"
@@ -338,11 +367,7 @@ def reject_staff_json(request, user_id: int):
             req.decided_at = timezone.now()
             req.save(update_fields=["status", "decided_by", "decided_at"])
 
-        # Remove M2M relations (optional; Django will clear on delete anyway).
-        for site in DropOffSite.objects.filter(staff_members=staff):
-            site.staff_members.remove(staff)
-
-        # Hard delete the user. DRF tokens and M2M rows will cascade away.
+        remove_staff_from_all_sites(staff)
         staff.delete()
 
     return JsonResponse({"success": True})
@@ -1295,6 +1320,37 @@ def reloadly_webhook(request):
 # Auth & Staff Approval
 # ==============================================================================
 
+# --- Admin: PointsConfig API ---
+
+class PointsConfigView(views.APIView):
+    permission_classes = [IsStaffish]
+    parser_classes = [JSONParser]
+
+    def get(self, request):
+        cfg = PointsConfig.current()
+        return Response({
+            "success": True,
+            "small": cfg.small_bottle_points,
+            "large": cfg.large_bottle_points,
+            "updated_at": localtime(cfg.updated_at).isoformat() if cfg.updated_at else None,
+        })
+
+    def post(self, request):
+        try:
+            small = int(request.data.get("small", 0))
+            large = int(request.data.get("large", 0))
+        except Exception:
+            return Response({"success": False, "error": "Invalid numbers."}, status=400)
+        if small < 0 or large < 0:
+            return Response({"success": False, "error": "Values must be ≥ 0."}, status=400)
+
+        cfg = PointsConfig.current()
+        cfg.small_bottle_points = small
+        cfg.large_bottle_points = large
+        cfg.save(update_fields=["small_bottle_points", "large_bottle_points", "updated_at"])
+        return Response({"success": True, "small": cfg.small_bottle_points, "large": cfg.large_bottle_points})
+
+
 class StaffSignupView(views.APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -1366,24 +1422,26 @@ class ApproveStaffView(views.APIView):
         staff = get_object_or_404(User, pk=user_id)
         req = StaffApprovalRequest.objects.filter(user=staff, status="pending").first()
 
-        staff.is_approved = True
-        staff.is_active = True
-        staff.is_staff = True
-        staff.save(update_fields=["is_approved", "is_active", "is_staff"])
+        barangay = req.requested_barangay if (req and req.requested_barangay) else staff.barangay
+        if not barangay:
+            return Response({"success": False, "error": "Requested barangay is required."}, status=400)
 
-        staff_group = get_or_create_group("staff")
-        staff.groups.add(staff_group)
+        with transaction.atomic():
+            staff.is_approved = True
+            staff.is_active = True
+            staff.is_staff = True
+            staff.save(update_fields=["is_approved", "is_active", "is_staff"])
 
-        if staff.barangay:
-            site, _ = DropOffSite.objects.get_or_create(barangay=staff.barangay)
-            # M2M attach
-            site.staff_members.add(staff)
+            staff_group = get_or_create_group("staff")
+            staff.groups.add(staff_group)
 
-        if req:
-            req.status = "approved"
-            req.decided_by = request.user
-            req.decided_at = timezone.now()
-            req.save(update_fields=["status", "decided_by", "decided_at"])
+            ensure_site_and_add_staff(barangay, staff)
+
+            if req:
+                req.status = "approved"
+                req.decided_by = request.user
+                req.decided_at = timezone.now()
+                req.save(update_fields=["status", "decided_by", "decided_at"])
 
         return Response({"success": True})
 
@@ -1401,12 +1459,11 @@ class RejectStaffView(views.APIView):
                 req.decided_at = timezone.now()
                 req.save(update_fields=["status", "decided_by", "decided_at"])
 
-            for site in DropOffSite.objects.filter(staff_members=staff):
-                site.staff_members.remove(staff)
-
+            remove_staff_from_all_sites(staff)
             staff.delete()
 
         return Response({"success": True})
+
 
 
 
@@ -1913,6 +1970,47 @@ def staff_management_view(request):
         "staff_management.html",
         {"pending_reqs": pending_reqs, "active_staff": active_staff},
     )
+    
+@require_staff_json
+@ensure_csrf_cookie
+def submissions_admin_view(request):
+    """
+    Server-rendered admin page that shows:
+      - Editable PointsConfig (small/large)
+      - Sites list (with assigned staff), links to site detail + CSV export buttons
+    POST updates the PointsConfig.
+    """
+    cfg = PointsConfig.current()
+
+    if request.method == "POST":
+        try:
+            small = int(request.POST.get("small", cfg.small_bottle_points))
+            large = int(request.POST.get("large", cfg.large_bottle_points))
+        except Exception:
+            small = cfg.small_bottle_points
+            large = cfg.large_bottle_points
+
+        if small >= 0 and large >= 0:
+            cfg.small_bottle_points = small
+            cfg.large_bottle_points = large
+            cfg.save(update_fields=["small_bottle_points", "large_bottle_points", "updated_at"])
+
+    sites = (
+        DropOffSite.objects
+        .select_related("barangay")
+        .prefetch_related("staff_members")
+        .order_by("barangay__name")
+    )
+
+    return render(
+        request,
+        "submissions_admin.html",  # you'll create this template
+        {
+            "cfg": cfg,
+            "sites": sites,
+        },
+    )
+
 
 
 @require_staff_json

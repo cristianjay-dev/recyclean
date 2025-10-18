@@ -4,50 +4,48 @@
 <div class="flex items-center justify-between mb-4">
   <div>
     <h1 class="text-2xl font-bold">
-      {{ site.barangay.name|default:site.barangay }} Drop-off Site
+      {{ site.barangay.name|default:site.barangay }} • Drop-off Site
     </h1>
-    {% if staff_members %}
-      <p class="text-sm text-gray-600 mt-1">
-        Staff:
+    <p class="text-sm text-gray-600 mt-1">
+      <span class="font-semibold">{{ staff_members|length }}</span> staff
+      {% if staff_members %}
+        —
         {% for s in staff_members %}
           <span class="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1">
             {{ s.get_full_name|default:s.username }}
           </span>
         {% endfor %}
-      </p>
-    {% else %}
-      <p class="text-sm text-gray-500 mt-1 italic">No staff assigned.</p>
-    {% endif %}
+      {% else %}
+        <span class="italic text-gray-500">No staff assigned.</span>
+      {% endif %}
+    </p>
   </div>
 
-  <div class="flex items-center gap-2">
-    <a href="{% url 'export_site_submissions_csv' site.id %}"
-       class="bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700">
-      Export Submissions (CSV)
-    </a>
-    <a href="{% url 'export_all_submissions_csv' %}"
-       class="bg-green-100 text-green-800 px-3 py-2 rounded hover:bg-green-200">
-      Export All (CSV)
-    </a>
-  </div>
+  <!-- Export CSV with date range -->
+  <form onsubmit="return exportCSV();" class="flex items-center gap-2">
+    <input type="date" id="exp_from" class="border rounded px-2 py-2">
+    <input type="date" id="exp_to" class="border rounded px-2 py-2">
+    <button class="bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700">
+      Export CSV
+    </button>
+  </form>
 </div>
 
-<!-- Period selector -->
+<!-- Period selector + quick export presets -->
 <div class="flex items-center gap-2 mb-4">
   {% with current=period|default:"week" %}
     <a href="?period=week"
-       class="px-3 py-1 rounded border {{ current == 'week'|yesno:'bg-blue-600 text-white,bg-white text-gray-700' }}">
-       Week
-    </a>
+       class="px-3 py-1 rounded border {{ current == 'week'|yesno:'bg-blue-600 text-white,bg-white text-gray-700' }}">Week</a>
     <a href="?period=month"
-       class="px-3 py-1 rounded border {{ current == 'month'|yesno:'bg-blue-600 text-white,bg-white text-gray-700' }}">
-       Month
-    </a>
+       class="px-3 py-1 rounded border {{ current == 'month'|yesno:'bg-blue-600 text-white,bg-white text-gray-700' }}">Month</a>
     <a href="?period=year"
-       class="px-3 py-1 rounded border {{ current == 'year'|yesno:'bg-blue-600 text-white,bg-white text-gray-700' }}">
-       Year
-    </a>
+       class="px-3 py-1 rounded border {{ current == 'year'|yesno:'bg-blue-600 text-white,bg-white text-gray-700' }}">Year</a>
   {% endwith %}
+
+  <span class="ml-3 text-sm text-gray-500">Quick export:</span>
+  <button class="px-3 py-1 rounded border" onclick="presetAndExport('week')">Week</button>
+  <button class="px-3 py-1 rounded border" onclick="presetAndExport('month')">Month</button>
+  <button class="px-3 py-1 rounded border" onclick="presetAndExport('year')">Year</button>
 </div>
 
 <!-- Metrics -->
@@ -94,9 +92,10 @@
         <th class="px-4 py-2 border">Date</th>
         <th class="px-4 py-2 border">Staff</th>
         <th class="px-4 py-2 border">Resident</th>
-        <th class="px-4 py-2 border">Claimed Points</th>
-        <th class="px-4 py-2 border">Bottle Data</th>
-        <th class="px-4 py-2 border">Source</th>
+        <th class="px-4 py-2 border">Small</th>
+        <th class="px-4 py-2 border">Large</th>
+        <th class="px-4 py-2 border">Proposed</th>
+        <th class="px-4 py-2 border">Claimed</th>
         <th class="px-4 py-2 border">Status</th>
       </tr>
     </thead>
@@ -105,31 +104,25 @@
       <tr class="hover:bg-gray-100">
         <td class="px-4 py-2 border">{{ sub.created_at|date:"Y-m-d H:i" }}</td>
         <td class="px-4 py-2 border">
-          {% if sub.staff %}
-            {{ sub.staff.get_full_name|default:sub.staff.username }}
-          {% else %}
-            —
-          {% endif %}
+          {% if sub.staff %}{{ sub.staff.get_full_name|default:sub.staff.username }}{% else %}—{% endif %}
         </td>
         <td class="px-4 py-2 border">
-          {% if sub.claimed_by %}
-            {{ sub.claimed_by.get_full_name|default:sub.claimed_by.username }}
-          {% else %}
-            Unclaimed
-          {% endif %}
+          {% if sub.claimed_by %}{{ sub.claimed_by.get_full_name|default:sub.claimed_by.username }}{% else %}<span class="text-gray-500">Unclaimed</span>{% endif %}
         </td>
+        <td class="px-4 py-2 border">
+          {% with s=0 %}{% for b in sub.bottle_data %}{% if b.size == 'small' %}{% firstof %}{% endif %}{% endfor %}{% endwith %}
+          {% with val=0 %}{% for b in sub.bottle_data %}{% if b.size == 'small' %}{% widthratio b.count|default:b.quantity 1 1 as val %}{{ b.count|default:b.quantity }}{% endif %}{% endfor %}{% if not val %}0{% endif %}{% endwith %}
+        </td>
+        <td class="px-4 py-2 border">
+          {% with val=0 %}{% for b in sub.bottle_data %}{% if b.size == 'large' %}{% widthratio b.count|default:b.quantity 1 1 as val %}{{ b.count|default:b.quantity }}{% endif %}{% endfor %}{% if not val %}0{% endif %}{% endwith %}
+        </td>
+        <td class="px-4 py-2 border">{{ sub.proposed_points|default:0 }}</td>
         <td class="px-4 py-2 border">{{ sub.claimed_points|default:0 }}</td>
-        <td class="px-4 py-2 border">
-          {% for b in sub.bottle_data %}
-            {{ b.size }} – {{ b.count|default:b.quantity }}<br>
-          {% endfor %}
-        </td>
-        <td class="px-4 py-2 border">{{ sub.source }}</td>
         <td class="px-4 py-2 border capitalize">{{ sub.status }}</td>
       </tr>
       {% empty %}
       <tr>
-        <td colspan="7" class="px-4 py-4 border text-center text-gray-500">
+        <td colspan="8" class="px-4 py-4 border text-center text-gray-500">
           No submissions found for this site.
         </td>
       </tr>
@@ -149,7 +142,7 @@
 
   const totalBottles = bottleValues.reduce((a, b) => a + b, 0) || 1;
 
-  // Activity Chart (week / month / year)
+  // Activity Chart
   new Chart(document.getElementById('activityChart'), {
     type: 'line',
     data: {
@@ -166,10 +159,7 @@
     },
     options: {
       responsive: true,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: (ctx) => `${ctx.raw} submissions` } }
-      },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${c.raw} submissions` } } },
       scales: { y: { beginAtZero: true } }
     }
   });
@@ -177,49 +167,41 @@
   // Bottle Size Distribution Chart
   new Chart(document.getElementById('bottleChart'), {
     type: 'bar',
-    data: {
-      labels: bottleLabels,
-      datasets: [{
-        label: 'Quantity',
-        data: bottleValues,
-        backgroundColor: [
-          'rgba(59, 130, 246, 0.6)',
-          'rgba(16, 185, 129, 0.6)',
-          'rgba(245, 158, 11, 0.6)',
-          'rgba(239, 68, 68, 0.6)',
-          'rgba(99, 102, 241, 0.6)'
-        ],
-        borderColor: '#fff',
-        borderWidth: 1
-      }]
-    },
+    data: { labels: bottleLabels, datasets: [{ label: 'Quantity', data: bottleValues, backgroundColor: ['rgba(59,130,246,.6)','rgba(16,185,129,.6)','rgba(245,158,11,.6)','rgba(239,68,68,.6)','rgba(99,102,241,.6)'], borderColor: '#fff', borderWidth: 1 }] },
     options: {
       responsive: true,
       plugins: {
         legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: function(context) {
-              const value = context.raw;
-              const percentage = ((value / totalBottles) * 100).toFixed(1);
-              return `${value} bottles (${percentage}%)`;
-            }
-          }
-        },
-        datalabels: {
-          anchor: 'end',
-          align: 'top',
-          formatter: (value) => {
-            const percentage = ((value / totalBottles) * 100).toFixed(1);
-            return `${value} (${percentage}%)`;
-          },
-          font: { weight: 'bold' }
-        }
+        tooltip: { callbacks: { label: (ctx) => { const v=ctx.raw; const p=((v/totalBottles)*100).toFixed(1); return `${v} bottles (${p}%)`; } } },
+        datalabels: { anchor: 'end', align: 'top', formatter: (v)=>{ const p=((v/totalBottles)*100).toFixed(1); return `${v} (${p}%)`; }, font: { weight: 'bold' } }
       },
       scales: { y: { beginAtZero: true } }
     },
     plugins: [ChartDataLabels]
   });
+
+  // --- CSV export helpers ---
+  function qs(v){ return encodeURIComponent(v || ""); }
+  function exportCSV(){
+    const f = document.getElementById('exp_from').value;
+    const t = document.getElementById('exp_to').value;
+    let url = "{% url 'export_site_submissions_csv' site.id %}";
+    if (f || t) url += `?from=${qs(f)}&to=${qs(t)}`;
+    window.location.href = url;
+    return false;
+  }
+  // presets that mirror the same ranges your view uses
+  function presetAndExport(kind){
+    const today = new Date(); // local
+    const to = new Date(today.getFullYear(), today.getMonth(), today.getDate()); // midnight today
+    let from = new Date(to);
+    if (kind === 'week') from.setDate(to.getDate() - 6);
+    if (kind === 'month') from.setDate(to.getDate() - 29);
+    if (kind === 'year') { from = new Date(to); from.setMonth(to.getMonth()-11); from.setDate(1); }
+    document.getElementById('exp_from').value = from.toISOString().slice(0,10);
+    document.getElementById('exp_to').value   = to.toISOString().slice(0,10);
+    exportCSV();
+  }
 </script>
 
 {% endblock %}
