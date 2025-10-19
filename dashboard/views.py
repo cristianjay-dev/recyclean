@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 from django.urls import reverse
 from django.conf import settings
-from django.contrib.auth import authenticate, logout, get_user_model
+from django.contrib.auth import authenticate, logout
 from django.contrib.auth.models import Group
 from django.db import transaction
 from django.db.models import Sum, Min, Max
@@ -1390,35 +1390,24 @@ def reloadly_webhook(request):
 @require_http_methods(["POST"])
 def reauth_admin(request):
     """
-    POST {username|email, password} for any Django superuser.
+    POST {username, password} of any Django superuser.
     On success, set a short-lived session flag to allow editing points.
     """
     if _admin_bypass_ok(request):
+        # in dev you can just allow it
         request.session["points_edit_ok_until"] = (timezone.now() + timedelta(minutes=5)).isoformat()
         return JsonResponse({"success": True, "until": request.session["points_edit_ok_until"]})
 
-    ident = (request.POST.get("username") or "").strip()   # can be username or email
+    username = (request.POST.get("username") or "").strip()
     password = request.POST.get("password") or ""
-    if not ident or not password:
-        return JsonResponse({"success": False, "error": "Missing credentials."}, status=400)
+    user = authenticate(username=username, password=password)
 
-    U = get_user_model()
-    # Find the account first by username (case-insensitive), then email
-    user_obj = (U.objects.filter(**{f"{U.USERNAME_FIELD}__iexact": ident}).first()
-                or U.objects.filter(email__iexact=ident).first())
-
-    # Build the auth kwargs using the real USERNAME_FIELD so ModelBackend is happy
-    auth_kwargs = {U.USERNAME_FIELD: getattr(user_obj, U.USERNAME_FIELD)} if user_obj else {U.USERNAME_FIELD: ident}
-
-    # Try authenticate with and without request (some custom backends expect request)
-    user = authenticate(request, password=password, **auth_kwargs) or authenticate(password=password, **auth_kwargs)
-
-    if not user or not user.is_active or not user.is_superuser:
+    if not user or not user.is_superuser or not user.is_active:
         return JsonResponse({"success": False, "error": "Invalid admin credentials."}, status=403)
 
+    # 5-minute window
     request.session["points_edit_ok_until"] = (timezone.now() + timedelta(minutes=5)).isoformat()
     return JsonResponse({"success": True, "until": request.session["points_edit_ok_until"]})
-
 
 
 class PointsConfigView(views.APIView):
