@@ -21,14 +21,14 @@ from django.contrib.auth.models import Group
 from django.db import transaction
 from django.db.models import Sum, Min, Max
 from django.http import Http404, HttpResponse, JsonResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, render, redirect
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.utils.html import escape
 from django.utils.timezone import localtime
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_POST, require_http_methods
 from rest_framework import permissions, serializers, views
 from rest_framework.decorators import api_view, permission_classes, parser_classes, authentication_classes
 from rest_framework.authtoken.models import Token
@@ -112,6 +112,24 @@ def _is_real_staff(user) -> bool:
         and user.is_staff
         and user.groups.filter(name="staff").exists()
     )
+
+def require_staff_page(view_func):
+    @wraps(view_func)
+    def _wrapped(request, *args, **kwargs):
+        # allow the existing admin-bypass in dev if you like
+        if _admin_bypass_ok(request):
+            return view_func(request, *args, **kwargs)
+
+        if not request.user.is_authenticated:
+            # redirect to login and preserve 'next'
+            return redirect(f"{reverse('login')}?next={request.get_full_path()}")
+
+        if not _is_real_staff(request.user):
+            # simple 403 page (you can make a nicer template)
+            return render(request, "403.html", status=403)
+
+        return view_func(request, *args, **kwargs)
+    return _wrapped
 
 
 def php_to_points(php_amount: int) -> int:
@@ -496,7 +514,7 @@ class DIYSubmitSerializer(serializers.Serializer):
 # ==============================================================================
 # Dashboard & Reward Requests (server-rendered)
 # ==============================================================================
-@require_staff_json
+@require_staff_page
 def dashboard(request):
     reloadly_balance = None
     reloadly_currency_code = "PHP"
@@ -528,7 +546,7 @@ def dashboard(request):
     }
     return render(request, "dashboard.html", context)
 
-@require_staff_json
+@require_staff_page
 def reward_requests_view(request):
     reward_requests = RewardRequest.objects.select_related("user").order_by("-id")
     reloadly_balance = None
@@ -661,7 +679,7 @@ def user_history(request, user_id: int):
 # ==============================================================================
 # DIY management (server page + APIs your template uses)
 # ==============================================================================
-@require_staff_json
+@require_staff_page
 @ensure_csrf_cookie
 def diy_dashboard(request):
     form = DIYTutorialForm()
@@ -1322,6 +1340,29 @@ def reloadly_webhook(request):
 
 # --- Admin: PointsConfig API ---
 
+@require_http_methods(["POST"])
+def reauth_admin(request):
+    """
+    POST {username, password} of any Django superuser.
+    On success, set a short-lived session flag to allow editing points.
+    """
+    if _admin_bypass_ok(request):
+        # in dev you can just allow it
+        request.session["points_edit_ok_until"] = (timezone.now() + timedelta(minutes=5)).isoformat()
+        return JsonResponse({"success": True, "until": request.session["points_edit_ok_until"]})
+
+    username = (request.POST.get("username") or "").strip()
+    password = request.POST.get("password") or ""
+    user = authenticate(username=username, password=password)
+
+    if not user or not user.is_superuser or not user.is_active:
+        return JsonResponse({"success": False, "error": "Invalid admin credentials."}, status=403)
+
+    # 5-minute window
+    request.session["points_edit_ok_until"] = (timezone.now() + timedelta(minutes=5)).isoformat()
+    return JsonResponse({"success": True, "until": request.session["points_edit_ok_until"]})
+
+
 class PointsConfigView(views.APIView):
     permission_classes = [IsStaffish]
     parser_classes = [JSONParser]
@@ -1942,13 +1983,13 @@ def staff_monitor(request, staff_id: int):
     })
 
 
-@require_staff_json
+@require_staff_page
 def dropoff_sites_view(request):
     # M2M: prefetch staff_members
     sites = DropOffSite.objects.select_related("barangay").prefetch_related("staff_members")
     return render(request, "dropoff_sites.html", {"sites": sites})
 
-@require_staff_json
+@require_staff_page
 @ensure_csrf_cookie
 def staff_management_view(request):
     # Only real applications that are waiting for action
@@ -1971,7 +2012,7 @@ def staff_management_view(request):
         {"pending_reqs": pending_reqs, "active_staff": active_staff},
     )
     
-@require_staff_json
+@require_staff_page
 @ensure_csrf_cookie
 def submissions_admin_view(request):
     """
@@ -1981,8 +2022,35 @@ def submissions_admin_view(request):
     POST updates the PointsConfig.
     """
     cfg = PointsConfig.current()
-
     if request.method == "POST":
+        # Must have a valid re-auth window
+        until_iso = request.session.get("points_edit_ok_until")
+        can_edit = False
+        if until_iso:
+            try:
+                until_dt = timezone.make_aware(datetime.fromisoformat(until_iso)) if "Z" not in until_iso else datetime.fromisoformat(until_iso)
+            except Exception:
+                until_dt = None
+            if until_dt and until_dt > timezone.now():
+                can_edit = True
+
+        if not can_edit:
+            # refuse the update silently (or add a message)
+            sites = (
+                DropOffSite.objects.select_related("barangay")
+                .prefetch_related("staff_members").order_by("barangay__name")
+            )
+            return render(
+                request,
+                "submissions_admin.html",
+                {
+                    "cfg": cfg,
+                    "sites": sites,
+                    "points_edit_error": "Re-auth as superuser required before editing.",
+                },
+            )
+
+        # proceed with saving (already your code)
         try:
             small = int(request.POST.get("small", cfg.small_bottle_points))
             large = int(request.POST.get("large", cfg.large_bottle_points))
@@ -2013,7 +2081,7 @@ def submissions_admin_view(request):
 
 
 
-@require_staff_json
+@require_staff_page
 def submissions_by_dropoff_site(request, site_id: int):
     site = get_object_or_404(DropOffSite, id=site_id)
     submissions = Submission.objects.filter(dropoff_site=site).select_related("staff", "claimed_by").order_by("-created_at")
@@ -2116,7 +2184,7 @@ def _period_bounds(param: str) -> Tuple[date, date, str, List[str]]:
     labels = [(start + timedelta(days=i)).strftime("%b %d") for i in range(7)]
     return start, end, "week", labels
 
-@require_staff_json
+@require_staff_page
 def dropoff_site_detail(request, site_id: int):
     site = get_object_or_404(DropOffSite, id=site_id)
     site_staff = list(site.staff_members.all())
@@ -2410,7 +2478,7 @@ def _summary_csv_response(filename: str, rows: List[dict]) -> HttpResponse:
         writer.writerow({k: r.get(k, "") for k in headers})
     return response
 
-@require_staff_json
+@require_staff_page
 def export_all_submissions_csv(request):
     rows = []
     sites = DropOffSite.objects.select_related("barangay").prefetch_related("staff_members")
@@ -2420,7 +2488,7 @@ def export_all_submissions_csv(request):
         rows.append(_site_summary(site, qs))
     return _summary_csv_response("sites_summary_all.csv", rows)
 
-@require_staff_json
+@require_staff_page
 def export_site_submissions_csv(request, site_id: int):
     site = get_object_or_404(
         DropOffSite.objects.select_related("barangay").prefetch_related("staff_members"),

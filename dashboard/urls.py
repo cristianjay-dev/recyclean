@@ -1,8 +1,24 @@
 from django.urls import path
 from django.http import HttpResponse
 from . import views
+from django.contrib.auth import views as auth_views
+
 
 urlpatterns = [
+    # Auth pages
+    path("login/", auth_views.LoginView.as_view(
+        template_name="login.html",
+        redirect_authenticated_user=True
+    ), name="login"),
+
+    path("logout/", auth_views.LogoutView.as_view(), name="logout"),
+    
+    # add if you want non-admin reset views
+    path("password_reset/", auth_views.PasswordResetView.as_view(), name="password_reset"),
+    path("password_reset/done/", auth_views.PasswordResetDoneView.as_view(), name="password_reset_done"),
+    path("reset/<uidb64>/<token>/", auth_views.PasswordResetConfirmView.as_view(), name="password_reset_confirm"),
+    path("reset/done/", auth_views.PasswordResetCompleteView.as_view(), name="password_reset_complete"),
+    
     # ------------------ Dashboard (server-rendered) ------------------
     path("", views.dashboard, name="dashboard"),
     path("rewards/", views.reward_requests_view, name="reward_requests"),

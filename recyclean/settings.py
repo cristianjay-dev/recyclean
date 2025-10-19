@@ -37,6 +37,17 @@ INSTALLED_APPS = [
     "corsheaders",
 ]
 
+# --- Admin app auth flow (login-first) ---
+LOGIN_URL = "login"                 # send anonymous users to /login/
+LOGIN_REDIRECT_URL = "dashboard"    # after successful login
+LOGOUT_REDIRECT_URL = "login"       # after logout
+EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+# Session quality-of-life (optional)
+SESSION_COOKIE_AGE = 60 * 60 * 8    # 8 hours
+SESSION_SAVE_EVERY_REQUEST = True
+
+
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",  # keep first
     "django.middleware.security.SecurityMiddleware",
