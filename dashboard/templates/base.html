@@ -44,9 +44,9 @@
 </head>
 
 <body class="bg-gray-100 min-h-screen">
-  {% if request.user.is_authenticated %}
-    <div class="flex min-h-screen">
-      {% with nm=request.resolver_match.url_name %}
+  <div class="min-h-screen {% if request.user.is_authenticated %}flex{% endif %}">
+    {% if request.user.is_authenticated %}
+      {% with nm=request.resolver_match.url_name|default:'' %}
       <!-- Sidebar -->
       <aside class="shrink-0 w-64 min-w-[16rem] bg-gray-800 text-white flex flex-col p-4 space-y-4 sticky top-0 h-screen">
         <h2 class="text-2xl font-bold mb-6">RecyClean</h2>
@@ -58,7 +58,7 @@
           </a>
 
           <a href="{% url 'dropoff_sites_view' %}"
-             class="px-3 py-2 rounded {% if nm in 'dropoff_sites_view dropoff_site_detail submissions_by_dropoff_site' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
+             class="px-3 py-2 rounded {% if nm == 'dropoff_sites_view' or nm == 'dropoff_site_detail' or nm == 'submissions_by_dropoff_site' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
             Submissions
           </a>
 
@@ -78,7 +78,6 @@
           </a>
         </nav>
 
-        <!-- Bottom: user + logout -->
         <div class="mt-auto pt-4 border-t border-gray-700">
           <div class="text-sm text-gray-300 mb-2 truncate">
             {{ request.user.get_full_name|default:request.user.username }}
@@ -95,17 +94,12 @@
         </div>
       </aside>
       {% endwith %}
+    {% endif %}
 
-      <!-- Main Content -->
-      <main class="flex-1 p-6">
-        {% block content %}{% endblock %}
-      </main>
-    </div>
-  {% else %}
-    <!-- Unauthenticated fallback: no sidebar, full-width content -->
-    <main class="min-h-screen flex-1 p-6">
+    <!-- Main content (single block!) -->
+    <main class="flex-1 p-6">
       {% block content %}{% endblock %}
     </main>
-  {% endif %}
+  </div>
 </body>
 </html>
