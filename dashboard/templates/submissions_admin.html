@@ -198,17 +198,16 @@
     e.preventDefault();
     hide(errBox);
 
-    // IMPORTANT: send FormData so Django sees request.POST
     const fd = new FormData(form);
 
     try {
+      // NOTE: pass FormData; window.postJson already handles FormData correctly
       await window.postJson("{% url 'reauth_admin' %}", fd);
 
       hide(form);
       setLockedState(false);
       show(unlockedBanner);
       unlockBtn.textContent = '🔓 Editing unlocked';
-
       setTimeout(() => hide(unlockedBanner), 6000);
     } catch (err) {
       errBox.textContent = err.message || 'Authentication failed.';
