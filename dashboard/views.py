@@ -294,15 +294,15 @@ def username_available(request):
 # ---- Admin/staff guard with development + shared-key bypass ------------------
 
 
+# views.py
 def _admin_bypass_ok(request) -> bool:
     """
-    Returns True if admin/staff checks should be bypassed:
-      - If settings has ADMIN_SHARED_KEY and it matches:
-          * Header:  X-Admin-Key
-          * or form/query param: admin_key
-      - Else if DEBUG is True (development convenience)
-      - Else if explicit toggle DIY_ADMIN_BYPASS is True
+    Allow ONLY:
+      - a matching ADMIN_SHARED_KEY, or
+      - DIY_ADMIN_BYPASS=true (explicit), never DEBUG.
     """
+    from django.conf import settings
+
     shared = getattr(settings, "ADMIN_SHARED_KEY", None)
     if shared:
         supplied = (
@@ -312,9 +312,10 @@ def _admin_bypass_ok(request) -> bool:
         )
         if supplied and str(supplied) == str(shared):
             return True
-    if getattr(settings, "DIY_ADMIN_BYPASS", None) is True:
-        return True
-    return bool(getattr(settings, "DEBUG", False))
+
+    return bool(getattr(settings, "DIY_ADMIN_BYPASS", False))
+
+
 
 
 def require_staff_json(view_func):

@@ -6,21 +6,52 @@ from django.contrib.auth import views as auth_views
 
 
 urlpatterns = [
-    # Auth pages
+     # Login (kept custom so / goes to login)
     path("", auth_views.LoginView.as_view(
-        template_name="login.html",
+        template_name="auth_form.html",              # ← shared form template
+        extra_context={"title": "Sign in", "button_label": "Sign in"},
         redirect_authenticated_user=True
     ), name="login"),
 
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
-    
-    # add if you want non-admin reset views
-    path("password_reset/", auth_views.PasswordResetView.as_view(), name="password_reset"),
-    path("password_reset/done/", auth_views.PasswordResetDoneView.as_view(), name="password_reset_done"),
-    path("reset/<uidb64>/<token>/", auth_views.PasswordResetConfirmView.as_view(), name="password_reset_confirm"),
-    path("reset/done/", auth_views.PasswordResetCompleteView.as_view(), name="password_reset_complete"),
-    
-    path("reauth-admin/", views.reauth_admin, name="reauth_admin"),
+
+    # Password reset (all use 1 of 2 shared templates)
+    path("password_reset/",
+         auth_views.PasswordResetView.as_view(
+             template_name="auth_form.html",        # ← shared form
+             extra_context={"title": "Reset your password", "button_label": "Send reset link"},
+             email_template_name="registration/password_reset_email.txt",
+             subject_template_name="registration/password_reset_subject.txt",
+         ),
+         name="password_reset"),
+
+    path("password_reset/done/",
+         auth_views.PasswordResetDoneView.as_view(
+             template_name="auth_message.html",     # ← shared message
+             extra_context={
+                 "title": "Check your email",
+                 "message": "If an account exists for that address, we’ve sent a reset link."
+             },
+         ),
+         name="password_reset_done"),
+
+    path("reset/<uidb64>/<token>/",
+         auth_views.PasswordResetConfirmView.as_view(
+             template_name="auth_form.html",        # ← shared form again
+             extra_context={"title": "Choose a new password", "button_label": "Reset password"},
+         ),
+         name="password_reset_confirm"),
+
+    path("reset/done/",
+         auth_views.PasswordResetCompleteView.as_view(
+             template_name="auth_message.html",     # ← shared message again
+             extra_context={
+                 "title": "Password reset complete",
+                 "message": "You can now sign in with your new password."
+             },
+         ),
+         name="password_reset_complete"),
+
 
     
     # ------------------ Dashboard (server-rendered) ------------------
