@@ -7,6 +7,11 @@
   <form method="post" novalidate>
     {% csrf_token %}
 
+    {# preserve redirect target when coming from ?next=/something #}
+    {% if next %}
+      <input type="hidden" name="next" value="{{ next }}">
+    {% endif %}
+
     {% if form.non_field_errors %}
       <div class="mb-4 rounded bg-red-50 text-red-700 text-sm px-3 py-2">
         {% for err in form.non_field_errors %}{{ err }}{% endfor %}
@@ -20,7 +25,6 @@
         </label>
 
         {{ field.errors }}
-
         {{ field|add_class:"w-full border rounded-lg px-3 py-2" }}
 
         {% if field.help_text %}
@@ -34,10 +38,14 @@
     </button>
   </form>
 
-  {% if view.__class__.__name__ == "LoginView" %}
-    <div class="mt-4 text-center">
-      <a class="text-sm text-blue-700 hover:underline" href="{% url 'password_reset' %}">Forgot password?</a>
-    </div>
-  {% endif %}
+  {% with nm=request.resolver_match.url_name %}
+    {% if nm == "login" %}
+      <div class="mt-4 text-center">
+        <a class="text-sm text-blue-700 hover:underline" href="{% url 'password_reset' %}">
+          Forgot password?
+        </a>
+      </div>
+    {% endif %}
+  {% endwith %}
 </div>
 {% endblock %}
