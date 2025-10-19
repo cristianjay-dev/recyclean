@@ -1390,24 +1390,40 @@ def reloadly_webhook(request):
 @require_http_methods(["POST"])
 def reauth_admin(request):
     """
-    POST {username, password} of any Django superuser.
-    On success, set a short-lived session flag to allow editing points.
+    Re-auth by asking ONLY the current logged-in admin for their password.
+    Accepts form-encoded or JSON: { "password": "..." }.
+    On success, sets a 5-minute session flag 'points_edit_ok_until'.
     """
+    # Dev bypass (shared key / flag)
     if _admin_bypass_ok(request):
-        # in dev you can just allow it
         request.session["points_edit_ok_until"] = (timezone.now() + timedelta(minutes=5)).isoformat()
         return JsonResponse({"success": True, "until": request.session["points_edit_ok_until"]})
 
-    username = (request.POST.get("username") or "").strip()
-    password = request.POST.get("password") or ""
-    user = authenticate(username=username, password=password)
+    # Must already be logged in as a superuser to even attempt reauth.
+    u = request.user
+    if not (u.is_authenticated and u.is_active and u.is_superuser):
+        return JsonResponse({"success": False, "error": "Admin session required."}, status=401)
 
-    if not user or not user.is_superuser or not user.is_active:
+    # Read password from form or JSON
+    password = request.POST.get("password")
+    if password is None:  # maybe JSON
+        try:
+            payload = json.loads((request.body or b"").decode("utf-8") or "{}")
+        except Exception:
+            payload = {}
+        password = payload.get("password")
+
+    if not password:
+        return JsonResponse({"success": False, "error": "Missing password."}, status=400)
+
+    # Check the current admin's password directly
+    if not u.check_password(password):
         return JsonResponse({"success": False, "error": "Invalid admin credentials."}, status=403)
 
-    # 5-minute window
+    # Success → grant a short-lived edit window
     request.session["points_edit_ok_until"] = (timezone.now() + timedelta(minutes=5)).isoformat()
     return JsonResponse({"success": True, "until": request.session["points_edit_ok_until"]})
+
 
 
 class PointsConfigView(views.APIView):

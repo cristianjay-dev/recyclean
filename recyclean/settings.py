@@ -39,7 +39,7 @@ INSTALLED_APPS = [
 
 # --- Admin app auth flow (login-first) ---
 LOGIN_URL = "login"                 # send anonymous users to /login/
-LOGIN_REDIRECT_URL = "dashboard"    # after successful login
+LOGIN_REDIRECT_URL = "dashboard" # after successful login
 LOGOUT_REDIRECT_URL = "login"       # after logout
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 

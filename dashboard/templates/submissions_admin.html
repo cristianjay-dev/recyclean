@@ -40,12 +40,12 @@
   <!-- Hidden re-auth panel -->
   <form id="reauthForm" class="hidden mb-4 space-y-2" onsubmit="return doReauth(event)">
     {% csrf_token %}
-    <div class="text-sm text-gray-600">Enter a <strong>superuser</strong> username & password to enable editing for 5 minutes.</div>
+    <div class="text-sm text-gray-600">
+      Enter your <strong>admin password</strong> to enable editing for 5 minutes.
+    </div>
     <div class="flex flex-wrap gap-3">
-      <input name="username" type="text" placeholder="Admin username"
-             class="border rounded px-3 py-2 w-48" required>
       <input name="password" type="password" placeholder="Admin password"
-             class="border rounded px-3 py-2 w-48" required>
+             class="border rounded px-3 py-2 w-56" required>
       <button class="bg-gray-900 text-white px-3 py-2 rounded hover:bg-black">
         Verify
       </button>
@@ -199,10 +199,11 @@
     hide(errBox);
 
     const fd = new FormData(form);
+    const password = fd.get('password');
 
     try {
-      // NOTE: pass FormData; window.postJson already handles FormData correctly
-      await window.postJson("{% url 'reauth_admin' %}", fd);
+      // Send JSON with password; base.html's postJson includes CSRF
+      await window.postJson("{% url 'reauth_admin' %}", { password });
 
       hide(form);
       setLockedState(false);
