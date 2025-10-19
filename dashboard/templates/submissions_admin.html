@@ -168,7 +168,6 @@
   const unlockedBanner = document.getElementById('unlockedBanner');
 
   function setLockedState(locked){
-    // toggle disabled/opacity on fields + save button
     pointsForm.classList.toggle('opacity-60', locked);
     pointsForm.classList.toggle('pointer-events-none', locked);
     pointsForm.querySelectorAll('input,button').forEach(el => {
@@ -183,7 +182,6 @@
 
   if (unlockBtn){
     unlockBtn.addEventListener('click', () => {
-      // show the mini re-auth form
       show(form);
       hide(errBox);
     });
@@ -200,21 +198,17 @@
     e.preventDefault();
     hide(errBox);
 
+    // IMPORTANT: send FormData so Django sees request.POST
     const fd = new FormData(form);
-    try {
-      // Uses helper defined in base.html (window.postJson) to include CSRF
-      await window.postJson("{% url 'reauth_admin' %}", {
-        username: fd.get('username'),
-        password: fd.get('password')
-      });
 
-      // Success: enable fields, hide form, show banner
+    try {
+      await window.postJson("{% url 'reauth_admin' %}", fd);
+
       hide(form);
       setLockedState(false);
       show(unlockedBanner);
       unlockBtn.textContent = '🔓 Editing unlocked';
 
-      // Auto-hide banner after a few seconds
       setTimeout(() => hide(unlockedBanner), 6000);
     } catch (err) {
       errBox.textContent = err.message || 'Authentication failed.';
