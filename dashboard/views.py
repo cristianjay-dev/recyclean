@@ -36,6 +36,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.authentication import TokenAuthentication, SessionAuthentication, BasicAuthentication
 from rest_framework.permissions import BasePermission
 from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
+from django.utils.dateparse import parse_datetime
 
 from rest_framework.response import Response
 from urllib.parse import urlparse, parse_qs
@@ -2075,30 +2076,26 @@ def staff_management_view(request):
         {"pending_reqs": pending_reqs, "active_staff": active_staff},
     )
     
+
+
 @require_admin_page
 @ensure_csrf_cookie
 def submissions_admin_view(request):
-    """
-    Server-rendered admin page that shows:
-      - Editable PointsConfig (small/large)
-      - Sites list (with assigned staff), links to site detail + CSV export buttons
-    POST updates the PointsConfig.
-    """
     cfg = PointsConfig.current()
+
     if request.method == "POST":
-        # Must have a valid re-auth window
+        # Check the 5-minute edit window
         until_iso = request.session.get("points_edit_ok_until")
         can_edit = False
         if until_iso:
-            try:
-                until_dt = timezone.make_aware(datetime.fromisoformat(until_iso)) if "Z" not in until_iso else datetime.fromisoformat(until_iso)
-            except Exception:
-                until_dt = None
-            if until_dt and until_dt > timezone.now():
-                can_edit = True
+            until_dt = parse_datetime(until_iso)  # handles offsets and 'Z'
+            if until_dt:
+                if timezone.is_naive(until_dt):
+                    until_dt = timezone.make_aware(until_dt, timezone.get_current_timezone())
+                if until_dt > timezone.now():
+                    can_edit = True
 
         if not can_edit:
-            # refuse the update silently (or add a message)
             sites = (
                 DropOffSite.objects.select_related("barangay")
                 .prefetch_related("staff_members").order_by("barangay__name")
@@ -2113,7 +2110,7 @@ def submissions_admin_view(request):
                 },
             )
 
-        # proceed with saving (already your code)
+        # proceed with saving
         try:
             small = int(request.POST.get("small", cfg.small_bottle_points))
             large = int(request.POST.get("large", cfg.large_bottle_points))
@@ -2126,6 +2123,10 @@ def submissions_admin_view(request):
             cfg.large_bottle_points = large
             cfg.save(update_fields=["small_bottle_points", "large_bottle_points", "updated_at"])
 
+        # IMPORTANT: lock again after save
+        request.session.pop("points_edit_ok_until", None)
+        # (optional) messages.success(request, "Points updated.")
+
     sites = (
         DropOffSite.objects
         .select_related("barangay")
@@ -2135,12 +2136,10 @@ def submissions_admin_view(request):
 
     return render(
         request,
-        "submissions_admin.html",  # you'll create this template
-        {
-            "cfg": cfg,
-            "sites": sites,
-        },
+        "submissions_admin.html",
+        {"cfg": cfg, "sites": sites},
     )
+
 
 
 

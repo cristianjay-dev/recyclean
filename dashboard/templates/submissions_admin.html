@@ -57,7 +57,7 @@
   </form>
 
   <!-- Points form (disabled until unlocked) -->
-  <form id="pointsForm" method="post" class="flex flex-wrap items-end gap-3 opacity-60 pointer-events-none">
+  <form id="pointsForm" method="post" action="" class="flex flex-wrap items-end gap-3 opacity-60 pointer-events-none">
     {% csrf_token %}
     <div>
       <label class="block text-sm text-gray-600 mb-1">Small bottle points</label>
@@ -79,7 +79,7 @@
 
   <!-- Banner shown once unlocked -->
   <div id="unlockedBanner" class="hidden mt-3 text-sm text-green-700 bg-green-50 rounded px-3 py-2">
-    ✅ Editing unlocked for 5 minutes. Make your changes and click Save.
+    ✅ Editing unlocked for <span id="unlockTimeLeft">5:00</span>. Make your changes and click Save.
   </div>
 </div>
 
@@ -166,19 +166,60 @@
   const errBox = document.getElementById('reauthErr');
   const pointsForm = document.getElementById('pointsForm');
   const unlockedBanner = document.getElementById('unlockedBanner');
+  const unlockTimeLeft = document.getElementById('unlockTimeLeft');
+
+  let relockTimer = null;
+  let relockDeadline = null;
 
   function setLockedState(locked){
     pointsForm.classList.toggle('opacity-60', locked);
     pointsForm.classList.toggle('pointer-events-none', locked);
     pointsForm.querySelectorAll('input,button').forEach(el => {
       if (el.name === 'csrfmiddlewaretoken') return;
-      el.disabled = locked && el.id !== 'saveBtn';
+      // enable/disable all interactive fields and Save
+      el.disabled = locked;
     });
-    document.getElementById('saveBtn').disabled = locked;
+    // button text
+    unlockBtn.textContent = locked ? '🔒 Unlock editing' : '🔓 Editing unlocked';
+    if (locked) {
+      hide(unlockedBanner);
+      // clear timer if any
+      if (relockTimer) {
+        clearInterval(relockTimer);
+        relockTimer = null;
+      }
+    } else {
+      show(unlockedBanner);
+    }
   }
 
   function show(elem){ elem.classList.remove('hidden'); }
   function hide(elem){ elem.classList.add('hidden'); }
+
+  function startRelockCountdown(untilIso){
+    try {
+      relockDeadline = new Date(untilIso);
+    } catch { relockDeadline = null; }
+    if (!relockDeadline) return;
+
+    function tick(){
+      const now = new Date();
+      const ms = relockDeadline - now;
+      if (ms <= 0) {
+        setLockedState(true);
+        if (relockTimer) clearInterval(relockTimer);
+        relockTimer = null;
+        return;
+      }
+      const s = Math.floor(ms/1000);
+      const mm = String(Math.floor(s/60)).padStart(1,'0');
+      const ss = String(s%60).padStart(2,'0');
+      if (unlockTimeLeft) unlockTimeLeft.textContent = `${mm}:${ss}`;
+    }
+    tick();
+    if (relockTimer) clearInterval(relockTimer);
+    relockTimer = setInterval(tick, 1000);
+  }
 
   if (unlockBtn){
     unlockBtn.addEventListener('click', () => {
@@ -202,20 +243,21 @@
     const password = fd.get('password');
 
     try {
-      // Send JSON with password; base.html's postJson includes CSRF
-      await window.postJson("{% url 'reauth_admin' %}", { password });
-
+      const res = await window.postJson("{% url 'reauth_admin' %}", { password });
       hide(form);
       setLockedState(false);
-      show(unlockedBanner);
-      unlockBtn.textContent = '🔓 Editing unlocked';
-      setTimeout(() => hide(unlockedBanner), 6000);
+      startRelockCountdown(res.until || null);
     } catch (err) {
       errBox.textContent = err.message || 'Authentication failed.';
       show(errBox);
     }
     return false;
   }
+
+  // Re-lock immediately when the Save POST is sent (UI), the server also re-locks via redirect.
+  pointsForm.addEventListener('submit', () => {
+    setLockedState(true);
+  });
 
   // Start in locked state. (Server will still enforce on POST.)
   setLockedState(true);
