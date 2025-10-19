@@ -7,6 +7,7 @@ import json
 import logging
 import secrets
 
+from django.contrib import messages
 import re
 from datetime import datetime, timedelta, date
 from functools import wraps
@@ -113,20 +114,23 @@ def _is_real_staff(user) -> bool:
         and user.groups.filter(name="staff").exists()
     )
 
+
+
 def require_staff_page(view_func):
     @wraps(view_func)
     def _wrapped(request, *args, **kwargs):
-        # allow the existing admin-bypass in dev if you like
+        # Keep your dev/admin bypass if you want
         if _admin_bypass_ok(request):
             return view_func(request, *args, **kwargs)
 
+        # Not logged in → go to login and preserve "next"
         if not request.user.is_authenticated:
-            # redirect to login and preserve 'next'
             return redirect(f"{reverse('login')}?next={request.get_full_path()}")
 
+        # Logged in but not approved staff → send back to login too
         if not _is_real_staff(request.user):
-            # simple 403 page (you can make a nicer template)
-            return render(request, "403.html", status=403)
+            messages.error(request, "Staff approval required to access that page.")
+            return redirect("login")
 
         return view_func(request, *args, **kwargs)
     return _wrapped
