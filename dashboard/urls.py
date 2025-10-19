@@ -7,20 +7,50 @@ from django.contrib.auth import views as auth_views
 
 urlpatterns = [
     # Auth pages
-    path("", auth_views.LoginView.as_view(
-        template_name="login.html",
-        redirect_authenticated_user=True
-    ), name="login"),
+    path(
+        "",
+        auth_views.LoginView.as_view(
+            template_name="login.html",
+            redirect_authenticated_user=True,
+        ),
+        name="login",
+    ),
 
-    path("logout/", auth_views.LogoutView.as_view(), name="logout"),
-    
-    # add if you want non-admin reset views
-    path("password_reset/", auth_views.PasswordResetView.as_view(), name="password_reset"),
-    path("password_reset/done/", auth_views.PasswordResetDoneView.as_view(), name="password_reset_done"),
-    path("reset/<uidb64>/<token>/", auth_views.PasswordResetConfirmView.as_view(), name="password_reset_confirm"),
-    path("reset/done/", auth_views.PasswordResetCompleteView.as_view(), name="password_reset_complete"),
+    path("logout/", auth_views.LogoutView.as_view(next_page="login"), name="logout"),
 
-    
+    # Password reset (use your custom templates)
+    path(
+        "password_reset/",
+        auth_views.PasswordResetView.as_view(
+            template_name="password_reset_form.html",            # you provided this
+            # Optional (uncomment if you add them):
+            # email_template_name="password_reset_email.txt",
+            # subject_template_name="password_reset_subject.txt",
+        ),
+        name="password_reset",
+    ),
+    path(
+        "password_reset/done/",
+        auth_views.PasswordResetDoneView.as_view(
+            template_name="password_reset_done.html"
+        ),
+        name="password_reset_done",
+    ),
+    path(
+        "reset/<uidb64>/<token>/",
+        auth_views.PasswordResetConfirmView.as_view(
+            template_name="password_reset_confirm.html"
+        ),
+        name="password_reset_confirm",
+    ),
+    path(
+        "reset/done/",
+        auth_views.PasswordResetCompleteView.as_view(
+            template_name="password_reset_complete.html"
+        ),
+        name="password_reset_complete",
+    ),
+
     path("reauth-admin/", views.reauth_admin, name="reauth_admin"),
 
     
@@ -57,7 +87,7 @@ urlpatterns = [
 
     # ------------------ Staff Metrics APIs ---------------------------
     path("api/staff/metrics/<int:staff_id>/", views.staff_metrics, name="staff_metrics"),
-    path("api/staff/monitor/<int:staff_id>/", views.staff_monitor, name="staff-monitor"),
+    path("api/staff/monitor/<int:staff_id>/", views.staff_monitor, name="staff_monitor"),
 
     # Approvals (JSON helpers for server pages)
     path("staff-actions/<int:user_id>/approve/", views.approve_staff_json, name="approve_staff_json"),

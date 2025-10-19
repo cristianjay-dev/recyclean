@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 from django.urls import reverse
 from django.conf import settings
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import authenticate, logout
 from django.contrib.auth.models import Group
 from django.db import transaction
 from django.db.models import Sum, Min, Max
@@ -246,7 +246,7 @@ def ensure_unique_username(base_username: str) -> str:
     """
     base = (base_username or "").strip() or "user"
     # lowercase + replace invalid with '_'
-    norm = re.sub(r'[^A-Za-z0-9_]', '_', base).lower()
+    norm = re.sub(r'[^A-Za-z0-9_]', '_', base).lower() or "user"
     if not norm[0].isalpha():
         norm = f"u{norm}"
     if len(norm) < 3:
@@ -297,6 +297,48 @@ def username_available(request):
 
 # ---- Admin/staff guard with development + shared-key bypass ------------------
 
+# --- Admin-only helpers (superuser only) ---
+
+def _is_admin_only(user) -> bool:
+    return bool(user and user.is_authenticated and user.is_active and user.is_superuser)
+
+def require_admin_page(view_func):
+    @wraps(view_func)
+    def _wrapped(request, *args, **kwargs):
+        if _admin_bypass_ok(request):
+            return view_func(request, *args, **kwargs)
+
+        if not request.user.is_authenticated:
+            return redirect(f"{reverse('login')}?next={request.get_full_path()}")
+
+        if not _is_admin_only(request.user):
+            messages.error(request, "Admin access required.")
+            logout(request)                      # prevents redirect loops
+            return redirect("login")
+
+        return view_func(request, *args, **kwargs)
+    return _wrapped
+
+
+def require_admin_json(view_func):
+    @wraps(view_func)
+    def _wrapped(request, *args, **kwargs):
+        if _admin_bypass_ok(request):
+            return view_func(request, *args, **kwargs)
+        u = request.user
+        if not u.is_authenticated:
+            return JsonResponse({"success": False, "error": "Authentication required."}, status=401)
+        if not _is_admin_only(u):
+            return JsonResponse({"success": False, "error": "Admin access required."}, status=403)
+        return view_func(request, *args, **kwargs)
+    return _wrapped
+
+
+class IsAdminOnly(BasePermission):
+    def has_permission(self, request, view):
+        if _admin_bypass_ok(request):
+            return True
+        return _is_admin_only(request.user)
 
 # views.py
 def _admin_bypass_ok(request) -> bool:
@@ -344,7 +386,7 @@ class IsStaffish(BasePermission):
 
 
 @require_POST
-@require_staff_json
+@require_admin_json
 def approve_staff_json(request, user_id: int):
     staff = get_object_or_404(User, pk=user_id)
     req = StaffApprovalRequest.objects.filter(user=staff, status="pending").first()
@@ -379,7 +421,7 @@ def approve_staff_json(request, user_id: int):
 
 
 @require_POST
-@require_staff_json
+@require_admin_json
 def reject_staff_json(request, user_id: int):
     staff = get_object_or_404(User, pk=user_id)
     with transaction.atomic():
@@ -519,7 +561,7 @@ class DIYSubmitSerializer(serializers.Serializer):
 # ==============================================================================
 # Dashboard & Reward Requests (server-rendered)
 # ==============================================================================
-@require_staff_page
+@require_admin_page
 def dashboard(request):
     reloadly_balance = None
     reloadly_currency_code = "PHP"
@@ -551,7 +593,7 @@ def dashboard(request):
     }
     return render(request, "dashboard.html", context)
 
-@require_staff_page
+@require_admin_page
 def reward_requests_view(request):
     reward_requests = RewardRequest.objects.select_related("user").order_by("-id")
     reloadly_balance = None
@@ -684,7 +726,7 @@ def user_history(request, user_id: int):
 # ==============================================================================
 # DIY management (server page + APIs your template uses)
 # ==============================================================================
-@require_staff_page
+@require_admin_page
 @ensure_csrf_cookie
 def diy_dashboard(request):
     form = DIYTutorialForm()
@@ -941,7 +983,7 @@ def diy_daily(request):
 
 
 @require_POST
-@require_staff_json
+@require_admin_json
 def diy_feature_today(request):
     try:
         tutorial_id = int(request.POST.get("tutorial_id", "0"))
@@ -970,7 +1012,7 @@ def diy_feature_today(request):
 
 
 @require_POST
-@require_staff_json
+@require_admin_json
 def diy_create_tutorial(request):
     form = DIYTutorialForm(request.POST, request.FILES)
     if form.is_valid():
@@ -980,7 +1022,7 @@ def diy_create_tutorial(request):
 
 
 @require_POST
-@require_staff_json
+@require_admin_json
 def diy_update_tutorial(request, tutorial_id: int):
     t = get_object_or_404(DIYTutorial, pk=tutorial_id)
     form = DIYTutorialForm(request.POST, request.FILES, instance=t)
@@ -991,7 +1033,7 @@ def diy_update_tutorial(request, tutorial_id: int):
 
 
 @require_POST
-@require_staff_json
+@require_admin_json
 def diy_delete_tutorial(request, tutorial_id: int):
     """
     Delete a DIY tutorial even if it was featured; automatically remove the selections
@@ -1369,7 +1411,7 @@ def reauth_admin(request):
 
 
 class PointsConfigView(views.APIView):
-    permission_classes = [IsStaffish]
+    permission_classes = [IsAdminOnly]
     parser_classes = [JSONParser]
 
     def get(self, request):
@@ -1462,7 +1504,7 @@ class StaffLoginView(views.APIView):
 
 
 class ApproveStaffView(views.APIView):
-    permission_classes = [IsStaffish]
+    permission_classes = [IsAdminOnly]
 
     def post(self, request, user_id: int):
         staff = get_object_or_404(User, pk=user_id)
@@ -1493,7 +1535,7 @@ class ApproveStaffView(views.APIView):
 
 
 class RejectStaffView(views.APIView):
-    permission_classes = [IsStaffish]
+    permission_classes = [IsAdminOnly]
 
     def post(self, request, user_id: int):
         staff = get_object_or_404(User, pk=user_id)
@@ -1988,13 +2030,13 @@ def staff_monitor(request, staff_id: int):
     })
 
 
-@require_staff_page
+@require_admin_page
 def dropoff_sites_view(request):
     # M2M: prefetch staff_members
     sites = DropOffSite.objects.select_related("barangay").prefetch_related("staff_members")
     return render(request, "dropoff_sites.html", {"sites": sites})
 
-@require_staff_page
+@require_admin_page
 @ensure_csrf_cookie
 def staff_management_view(request):
     # Only real applications that are waiting for action
@@ -2017,7 +2059,7 @@ def staff_management_view(request):
         {"pending_reqs": pending_reqs, "active_staff": active_staff},
     )
     
-@require_staff_page
+@require_admin_page
 @ensure_csrf_cookie
 def submissions_admin_view(request):
     """
@@ -2086,7 +2128,7 @@ def submissions_admin_view(request):
 
 
 
-@require_staff_page
+@require_admin_page
 def submissions_by_dropoff_site(request, site_id: int):
     site = get_object_or_404(DropOffSite, id=site_id)
     submissions = Submission.objects.filter(dropoff_site=site).select_related("staff", "claimed_by").order_by("-created_at")
@@ -2189,7 +2231,7 @@ def _period_bounds(param: str) -> Tuple[date, date, str, List[str]]:
     labels = [(start + timedelta(days=i)).strftime("%b %d") for i in range(7)]
     return start, end, "week", labels
 
-@require_staff_page
+@require_admin_page
 def dropoff_site_detail(request, site_id: int):
     site = get_object_or_404(DropOffSite, id=site_id)
     site_staff = list(site.staff_members.all())
@@ -2483,7 +2525,7 @@ def _summary_csv_response(filename: str, rows: List[dict]) -> HttpResponse:
         writer.writerow({k: r.get(k, "") for k in headers})
     return response
 
-@require_staff_page
+@require_admin_page
 def export_all_submissions_csv(request):
     rows = []
     sites = DropOffSite.objects.select_related("barangay").prefetch_related("staff_members")
@@ -2493,7 +2535,7 @@ def export_all_submissions_csv(request):
         rows.append(_site_summary(site, qs))
     return _summary_csv_response("sites_summary_all.csv", rows)
 
-@require_staff_page
+@require_admin_page
 def export_site_submissions_csv(request, site_id: int):
     site = get_object_or_404(
         DropOffSite.objects.select_related("barangay").prefetch_related("staff_members"),
@@ -2509,7 +2551,7 @@ def export_site_submissions_csv(request, site_id: int):
 # ==============================================================================
 
 @require_POST
-@require_staff_json
+@require_admin_json
 def delete_dropoff_site(request, site_id: int):
     site = get_object_or_404(DropOffSite, pk=site_id)
     site.delete()

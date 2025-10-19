@@ -94,7 +94,8 @@ class UserAdmin(BaseUserAdmin):
             if not user.is_approved:
                 user.is_approved = True
                 user.is_active = True
-                user.save(update_fields=["is_approved", "is_active"])
+                user.is_staff = True
+                user.save(update_fields=["is_approved", "is_active", "is_staff"])  
                 _add_to_group(user, "staff")
                 if user.barangay:
                     site, _ = DropOffSite.objects.get_or_create(barangay=user.barangay)
@@ -161,11 +162,13 @@ class SubmissionAdmin(admin.ModelAdmin):
     )
     readonly_fields = ("created_at", "updated_at", "claimed_at")
     date_hierarchy = "created_at"
+    raw_id_fields = ("staff", "claimed_by", "dropoff_site")
 
 @admin.register(StaffTransaction)
 class StaffTransactionAdmin(admin.ModelAdmin):
     list_display = ("id", "staff", "submission", "action", "created_at")
     search_fields = ("staff__username", "staff__email", "submission__id")
+    raw_id_fields = ("staff", "submission")
     list_filter = ("action",)
     date_hierarchy = "created_at"
 
@@ -175,6 +178,7 @@ class UserPointsLedgerAdmin(admin.ModelAdmin):
     search_fields = ("user__username", "user__email", "notes")
     list_filter = ("source",)
     readonly_fields = ("created_at",)
+    raw_id_fields = ("user", "submission")
 
 # =============== Rewards (Reloadly) ===============
 
@@ -185,25 +189,35 @@ class RewardRequestAdmin(admin.ModelAdmin):
     search_fields = ("user__username", "user__email", "mobile_number")
     readonly_fields = ("date_requested",)
     actions = ["mark_paid", "mark_rejected"]
+    raw_id_fields = ("user",)
 
     @transaction.atomic
     def mark_paid(self, request, queryset):
         """
         Admin override to mark as paid and deduct points if not yet deducted.
-        This does not call Reloadly; it only adjusts local records.
+        This does not call Reloadly; it only adjusts local records + ledger.
         """
         changed = 0
-        for rr in queryset:
+        for rr in queryset.select_related("user"):
             if rr.status != "paid":
                 user = rr.user
                 if user.total_points >= rr.points_used:
-                    user.total_points -= rr.points_used
+                    user.total_points -= int(rr.points_used or 0)
                     user.save(update_fields=["total_points"])
+                    UserPointsLedger.objects.create(
+                        user=user,
+                        submission=None,
+                        source="adjustment",
+                        delta_points=-int(rr.points_used or 0),
+                        balance_after=user.total_points,
+                        notes=f"Mobile load (admin): {rr.mobile_number}",
+                    )
                 rr.status = "paid"
                 rr.date_processed = timezone.now()
                 rr.save(update_fields=["status", "date_processed"])
                 changed += 1
         self.message_user(request, f"Marked {changed} request(s) as paid.")
+
     mark_paid.short_description = "Mark selected as PAID (deduct points)"
 
     @transaction.atomic
@@ -230,9 +244,10 @@ class StaffApprovalRequestAdmin(admin.ModelAdmin):
                 user = req.user
                 user.is_approved = True
                 user.is_active = True
+                user.is_staff = True
                 if req.requested_barangay and not user.barangay:
                     user.barangay = req.requested_barangay
-                user.save(update_fields=["is_approved", "is_active", "barangay"])
+                user.save(update_fields=["is_approved", "is_active", "barangay", "is_staff"]) 
                 _add_to_group(user, "staff")
 
                 if user.barangay:
