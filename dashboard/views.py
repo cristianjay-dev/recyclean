@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 from django.urls import reverse
 from django.conf import settings
-from django.contrib.auth import authenticate
+from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import Group
 from django.db import transaction
 from django.db.models import Sum, Min, Max
@@ -116,20 +116,20 @@ def _is_real_staff(user) -> bool:
 
 
 
+  # add this
+
 def require_staff_page(view_func):
     @wraps(view_func)
     def _wrapped(request, *args, **kwargs):
-        # Keep your dev/admin bypass if you want
         if _admin_bypass_ok(request):
             return view_func(request, *args, **kwargs)
 
-        # Not logged in → go to login and preserve "next"
         if not request.user.is_authenticated:
             return redirect(f"{reverse('login')}?next={request.get_full_path()}")
 
-        # Logged in but not approved staff → send back to login too
         if not _is_real_staff(request.user):
             messages.error(request, "Staff approval required to access that page.")
+            logout(request)  # ← key: prevents redirect loop with LoginView
             return redirect("login")
 
         return view_func(request, *args, **kwargs)
