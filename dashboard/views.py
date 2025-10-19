@@ -1426,10 +1426,15 @@ def reauth_admin(request):
     return JsonResponse({"success": True, "until": request.session["points_edit_ok_until"]})
 
 
-
 class PointsConfigView(views.APIView):
-    permission_classes = [IsAdminOnly]
-    parser_classes = [JSONParser]
+    authentication_classes = [TokenAuthentication, SessionAuthentication, BasicAuthentication]
+
+    # GET: any real staff (or admin-bypass) can read
+    # POST: only admin can update
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [IsStaffish()]   # staff can read the config
+        return [IsAdminOnly()]      # only admins can edit
 
     def get(self, request):
         cfg = PointsConfig.current()
@@ -1454,6 +1459,7 @@ class PointsConfigView(views.APIView):
         cfg.large_bottle_points = large
         cfg.save(update_fields=["small_bottle_points", "large_bottle_points", "updated_at"])
         return Response({"success": True, "small": cfg.small_bottle_points, "large": cfg.large_bottle_points})
+
 
 
 class StaffSignupView(views.APIView):
@@ -1510,12 +1516,22 @@ class StaffLoginView(views.APIView):
         if not authenticate(username=user.username, password=password):
             return Response({"success": False, "error": "Incorrect password."}, status=400)
 
-        # do NOT add group here
         token, _ = Token.objects.get_or_create(user=user)
+
+        # find (or infer) their site
+        site = DropOffSite.objects.filter(staff_members=user).first()
+        if not site and user.barangay:
+            # safety net: ensure site exists for their barangay
+            site, _ = DropOffSite.objects.get_or_create(barangay=user.barangay)
+
         return Response({"success": True, "token": token.key, "user": {
-            "id": user.id, "name": user.get_full_name(), "email": user.email,
-            "username": user.username, "mobile": user.mobile_number,
+            "id": user.id,
+            "name": user.get_full_name(),
+            "email": user.email,
+            "username": user.username,
+            "mobile": user.mobile_number,
             "barangay": user.barangay.name if user.barangay else None,
+            "dropoff_site_id": site.id if site else None,   # <<< add this
         }})
 
 

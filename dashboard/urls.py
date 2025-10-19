@@ -88,7 +88,7 @@ urlpatterns = [
     # ------------------ Staff Metrics APIs ---------------------------
     path("api/staff/metrics/<int:staff_id>/", views.staff_metrics, name="staff_metrics"),
     path("api/staff/monitor/<int:staff_id>/", views.staff_monitor, name="staff_monitor"),
-
+    path("api/config/points/", views.PointsConfigView.as_view(), name="points_config"),
     # Approvals (JSON helpers for server pages)
     path("staff-actions/<int:user_id>/approve/", views.approve_staff_json, name="approve_staff_json"),
     path("staff-actions/<int:user_id>/reject/",  views.reject_staff_json,  name="reject_staff_json"),
