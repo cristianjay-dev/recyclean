@@ -1,3 +1,4 @@
+# dashboard/urls.py
 from django.urls import path
 from django.http import HttpResponse
 from . import views
@@ -23,7 +24,7 @@ urlpatterns = [
 
     
     # ------------------ Dashboard (server-rendered) ------------------
-    path("", views.dashboard, name="dashboard"),
+    path("dashboard/", views.dashboard, name="dashboard"),
     path("rewards/", views.reward_requests_view, name="reward_requests"),
 
     # ------------------ Image Processing (prototype) -----------------

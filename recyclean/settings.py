@@ -44,7 +44,8 @@ LOGOUT_REDIRECT_URL = "login"       # after logout
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
 # Session quality-of-life (optional)
-SESSION_COOKIE_AGE = 60 * 60 * 8    # 8 hours
+DEFAULT_FROM_EMAIL = "Recyclean <no-reply@localhost>"
+PASSWORD_RESET_TIMEOUT = 60 * 60  # 1 hour, optional
 SESSION_SAVE_EVERY_REQUEST = True
 
 
