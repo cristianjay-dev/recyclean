@@ -69,9 +69,16 @@
       <input name="large" type="number" min="0" value="{{ cfg.large_bottle_points }}"
              class="border rounded px-3 py-2 w-28" disabled>
     </div>
-    <button id="saveBtn" class="bg-blue-600 text-white px-3 py-2 rounded" disabled>
-      Save
+
+    <!-- Save area with a tiny inline spinner for the Saving… state -->
+    <button id="saveBtn" class="bg-blue-600 text-white px-3 py-2 rounded inline-flex items-center gap-2" disabled>
+      <span class="save-label">Save</span>
+      <svg class="save-spinner hidden animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+      </svg>
     </button>
+
     {% if cfg.updated_at %}
       <span class="text-sm text-gray-500">Last updated: {{ cfg.updated_at|date:"Y-m-d H:i" }}</span>
     {% endif %}
@@ -167,6 +174,9 @@
   const pointsForm = document.getElementById('pointsForm');
   const unlockedBanner = document.getElementById('unlockedBanner');
   const unlockTimeLeft = document.getElementById('unlockTimeLeft');
+  const saveBtn = document.getElementById('saveBtn');
+  const saveLabel = saveBtn.querySelector('.save-label');
+  const saveSpinner = saveBtn.querySelector('.save-spinner');
 
   let relockTimer = null;
   let relockDeadline = null;
@@ -176,18 +186,18 @@
     pointsForm.classList.toggle('pointer-events-none', locked);
     pointsForm.querySelectorAll('input,button').forEach(el => {
       if (el.name === 'csrfmiddlewaretoken') return;
-      // enable/disable all interactive fields and Save
       el.disabled = locked;
     });
-    // button text
     unlockBtn.textContent = locked ? '🔒 Unlock editing' : '🔓 Editing unlocked';
     if (locked) {
       hide(unlockedBanner);
-      // clear timer if any
       if (relockTimer) {
         clearInterval(relockTimer);
         relockTimer = null;
       }
+      // Reset Save button visuals
+      saveSpinner.classList.add('hidden');
+      saveLabel.textContent = 'Save';
     } else {
       show(unlockedBanner);
     }
@@ -197,23 +207,20 @@
   function hide(elem){ elem.classList.add('hidden'); }
 
   function startRelockCountdown(untilIso){
-    try {
-      relockDeadline = new Date(untilIso);
-    } catch { relockDeadline = null; }
+    try { relockDeadline = new Date(untilIso); } catch { relockDeadline = null; }
     if (!relockDeadline) return;
 
     function tick(){
-      const now = new Date();
-      const ms = relockDeadline - now;
+      const ms = relockDeadline - new Date();
       if (ms <= 0) {
         setLockedState(true);
         if (relockTimer) clearInterval(relockTimer);
         relockTimer = null;
         return;
       }
-      const s = Math.floor(ms/1000);
-      const mm = String(Math.floor(s/60)).padStart(1,'0');
-      const ss = String(s%60).padStart(2,'0');
+      const totalSec = Math.floor(ms / 1000);
+      const mm = String(Math.floor(totalSec / 60));
+      const ss = String(totalSec % 60).padStart(2,'0');
       if (unlockTimeLeft) unlockTimeLeft.textContent = `${mm}:${ss}`;
     }
     tick();
@@ -254,12 +261,18 @@
     return false;
   }
 
-  // Re-lock immediately when the Save POST is sent (UI), the server also re-locks via redirect.
+  // --- Saving state: DO NOT lock the form on submit; just show spinner & disable the Save button ---
   pointsForm.addEventListener('submit', () => {
-    setLockedState(true);
+    // prevent changing numbers during submit without blocking form serialization
+    pointsForm.querySelectorAll('input[type="number"]').forEach(el => el.readOnly = true);
+
+    saveBtn.disabled = true;              // ok to disable button itself
+    saveLabel.textContent = 'Saving…';
+    saveSpinner.classList.remove('hidden');
+    // do NOT call setLockedState(true) here
   });
 
-  // Start in locked state. (Server will still enforce on POST.)
+  // Start locked; server enforces on POST.
   setLockedState(true);
 </script>
 

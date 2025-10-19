@@ -2084,11 +2084,10 @@ def submissions_admin_view(request):
     cfg = PointsConfig.current()
 
     if request.method == "POST":
-        # Check the 5-minute edit window
         until_iso = request.session.get("points_edit_ok_until")
         can_edit = False
         if until_iso:
-            until_dt = parse_datetime(until_iso)  # handles offsets and 'Z'
+            until_dt = parse_datetime(until_iso)
             if until_dt:
                 if timezone.is_naive(until_dt):
                     until_dt = timezone.make_aware(until_dt, timezone.get_current_timezone())
@@ -2096,19 +2095,13 @@ def submissions_admin_view(request):
                     can_edit = True
 
         if not can_edit:
-            sites = (
-                DropOffSite.objects.select_related("barangay")
-                .prefetch_related("staff_members").order_by("barangay__name")
-            )
-            return render(
-                request,
-                "submissions_admin.html",
-                {
-                    "cfg": cfg,
-                    "sites": sites,
-                    "points_edit_error": "Re-auth as superuser required before editing.",
-                },
-            )
+            sites = (DropOffSite.objects.select_related("barangay")
+                     .prefetch_related("staff_members").order_by("barangay__name"))
+            return render(request, "submissions_admin.html", {
+                "cfg": cfg,
+                "sites": sites,
+                "points_edit_error": "Re-auth as superuser required before editing.",
+            })
 
         # proceed with saving
         try:
@@ -2123,22 +2116,15 @@ def submissions_admin_view(request):
             cfg.large_bottle_points = large
             cfg.save(update_fields=["small_bottle_points", "large_bottle_points", "updated_at"])
 
-        # IMPORTANT: lock again after save
+        # lock again and redirect (PRG)
         request.session.pop("points_edit_ok_until", None)
-        # (optional) messages.success(request, "Points updated.")
+        messages.success(request, "Points updated.")
+        return redirect("dropoff_sites_view")   # or redirect(request.path)
 
-    sites = (
-        DropOffSite.objects
-        .select_related("barangay")
-        .prefetch_related("staff_members")
-        .order_by("barangay__name")
-    )
+    sites = (DropOffSite.objects.select_related("barangay")
+             .prefetch_related("staff_members").order_by("barangay__name"))
+    return render(request, "submissions_admin.html", {"cfg": cfg, "sites": sites})
 
-    return render(
-        request,
-        "submissions_admin.html",
-        {"cfg": cfg, "sites": sites},
-    )
 
 
 
