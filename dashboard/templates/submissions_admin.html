@@ -15,28 +15,72 @@
   </form>
 </div>
 
-<!-- Points configuration -->
+<!-- Points configuration (locked until superuser re-auth) -->
 <div class="bg-white rounded shadow p-4 mb-6">
-  <h2 class="text-lg font-semibold mb-3">Points per Bottle</h2>
-  <form method="post" class="flex flex-wrap items-end gap-3">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-lg font-semibold">Points per Bottle</h2>
+
+    <div class="flex items-center gap-2">
+      <button
+        id="unlockBtn"
+        type="button"
+        class="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
+      >
+        🔒 Unlock editing
+      </button>
+    </div>
+  </div>
+
+  {% if points_edit_error %}
+    <div class="mb-3 rounded bg-yellow-50 text-yellow-800 text-sm px-3 py-2">
+      {{ points_edit_error }}
+    </div>
+  {% endif %}
+
+  <!-- Hidden re-auth panel -->
+  <form id="reauthForm" class="hidden mb-4 space-y-2" onsubmit="return doReauth(event)">
+    {% csrf_token %}
+    <div class="text-sm text-gray-600">Enter a <strong>superuser</strong> username & password to enable editing for 5 minutes.</div>
+    <div class="flex flex-wrap gap-3">
+      <input name="username" type="text" placeholder="Admin username"
+             class="border rounded px-3 py-2 w-48" required>
+      <input name="password" type="password" placeholder="Admin password"
+             class="border rounded px-3 py-2 w-48" required>
+      <button class="bg-gray-900 text-white px-3 py-2 rounded hover:bg-black">
+        Verify
+      </button>
+      <button type="button" id="cancelReauth" class="px-3 py-2 rounded border border-gray-300 hover:bg-gray-50">
+        Cancel
+      </button>
+    </div>
+    <div id="reauthErr" class="hidden mt-2 text-sm text-red-600"></div>
+  </form>
+
+  <!-- Points form (disabled until unlocked) -->
+  <form id="pointsForm" method="post" class="flex flex-wrap items-end gap-3 opacity-60 pointer-events-none">
     {% csrf_token %}
     <div>
       <label class="block text-sm text-gray-600 mb-1">Small bottle points</label>
       <input name="small" type="number" min="0" value="{{ cfg.small_bottle_points }}"
-             class="border rounded px-3 py-2 w-28">
+             class="border rounded px-3 py-2 w-28" disabled>
     </div>
     <div>
       <label class="block text-sm text-gray-600 mb-1">Large bottle points</label>
       <input name="large" type="number" min="0" value="{{ cfg.large_bottle_points }}"
-             class="border rounded px-3 py-2 w-28">
+             class="border rounded px-3 py-2 w-28" disabled>
     </div>
-    <button class="bg-blue-600 text-white px-3 py-2 rounded hover:bg-blue-700">
+    <button id="saveBtn" class="bg-blue-600 text-white px-3 py-2 rounded" disabled>
       Save
     </button>
     {% if cfg.updated_at %}
       <span class="text-sm text-gray-500">Last updated: {{ cfg.updated_at|date:"Y-m-d H:i" }}</span>
     {% endif %}
   </form>
+
+  <!-- Banner shown once unlocked -->
+  <div id="unlockedBanner" class="hidden mt-3 text-sm text-green-700 bg-green-50 rounded px-3 py-2">
+    ✅ Editing unlocked for 5 minutes. Make your changes and click Save.
+  </div>
 </div>
 
 <!-- Sites table -->
@@ -52,14 +96,11 @@
     <tbody>
       {% for site in sites %}
       <tr class="border-t hover:bg-gray-50">
-        <!-- Clickable barangay → detail page -->
         <td class="p-3">
           <a href="{% url 'dropoff_site_detail' site.id %}" class="text-blue-700 hover:underline">
             {{ site.barangay.name|default:site.barangay }}
           </a>
         </td>
-
-        <!-- Staff list & count -->
         <td class="p-3">
           {% with members=site.staff_members.all %}
             <div class="flex items-center gap-2 flex-wrap">
@@ -76,15 +117,12 @@
             </div>
           {% endwith %}
         </td>
-
-        <!-- Actions: View / Export CSV (uses the same date range inputs at the top) -->
         <td class="p-3">
           <div class="flex items-center gap-2">
             <a href="{% url 'dropoff_site_detail' site.id %}"
                class="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">
               View
             </a>
-
             <button onclick="exportSiteCSV({{ site.id }})"
                     class="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
               Export CSV
@@ -120,6 +158,73 @@
     if (f || t) url += `?from=${qs(f)}&to=${qs(t)}`;
     window.location.href = url;
   }
+
+  // --- Re-auth UI / logic ---
+  const unlockBtn = document.getElementById('unlockBtn');
+  const form = document.getElementById('reauthForm');
+  const cancelReauth = document.getElementById('cancelReauth');
+  const errBox = document.getElementById('reauthErr');
+  const pointsForm = document.getElementById('pointsForm');
+  const unlockedBanner = document.getElementById('unlockedBanner');
+
+  function setLockedState(locked){
+    // toggle disabled/opacity on fields + save button
+    pointsForm.classList.toggle('opacity-60', locked);
+    pointsForm.classList.toggle('pointer-events-none', locked);
+    pointsForm.querySelectorAll('input,button').forEach(el => {
+      if (el.name === 'csrfmiddlewaretoken') return;
+      el.disabled = locked && el.id !== 'saveBtn';
+    });
+    document.getElementById('saveBtn').disabled = locked;
+  }
+
+  function show(elem){ elem.classList.remove('hidden'); }
+  function hide(elem){ elem.classList.add('hidden'); }
+
+  if (unlockBtn){
+    unlockBtn.addEventListener('click', () => {
+      // show the mini re-auth form
+      show(form);
+      hide(errBox);
+    });
+  }
+
+  if (cancelReauth){
+    cancelReauth.addEventListener('click', () => {
+      hide(form);
+      hide(errBox);
+    });
+  }
+
+  async function doReauth(e){
+    e.preventDefault();
+    hide(errBox);
+
+    const fd = new FormData(form);
+    try {
+      // Uses helper defined in base.html (window.postJson) to include CSRF
+      await window.postJson("{% url 'reauth_admin' %}", {
+        username: fd.get('username'),
+        password: fd.get('password')
+      });
+
+      // Success: enable fields, hide form, show banner
+      hide(form);
+      setLockedState(false);
+      show(unlockedBanner);
+      unlockBtn.textContent = '🔓 Editing unlocked';
+
+      // Auto-hide banner after a few seconds
+      setTimeout(() => hide(unlockedBanner), 6000);
+    } catch (err) {
+      errBox.textContent = err.message || 'Authentication failed.';
+      show(errBox);
+    }
+    return false;
+  }
+
+  // Start in locked state. (Server will still enforce on POST.)
+  setLockedState(true);
 </script>
 
 {% endblock %}

@@ -6,7 +6,7 @@ from django.contrib.auth import views as auth_views
 
 urlpatterns = [
     # Auth pages
-    path("login/", auth_views.LoginView.as_view(
+    path("", auth_views.LoginView.as_view(
         template_name="login.html",
         redirect_authenticated_user=True
     ), name="login"),
@@ -18,6 +18,9 @@ urlpatterns = [
     path("password_reset/done/", auth_views.PasswordResetDoneView.as_view(), name="password_reset_done"),
     path("reset/<uidb64>/<token>/", auth_views.PasswordResetConfirmView.as_view(), name="password_reset_confirm"),
     path("reset/done/", auth_views.PasswordResetCompleteView.as_view(), name="password_reset_complete"),
+    
+    path("reauth-admin/", views.reauth_admin, name="reauth_admin"),
+
     
     # ------------------ Dashboard (server-rendered) ------------------
     path("", views.dashboard, name="dashboard"),

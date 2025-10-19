@@ -50,32 +50,49 @@
 
       <nav class="flex flex-col space-y-2">
         <a href="{% url 'dashboard' %}"
-           class="px-3 py-2 rounded {% if nm == 'dashboard' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
+          class="px-3 py-2 rounded {% if nm == 'dashboard' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
           Dashboard
         </a>
 
         <a href="{% url 'dropoff_sites_view' %}"
-           class="px-3 py-2 rounded {% if nm == 'dropoff_sites_view' or nm == 'dropoff_site_detail' or nm == 'submissions_by_dropoff_site' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
+          class="px-3 py-2 rounded {% if nm == 'dropoff_sites_view' or nm == 'dropoff_site_detail' or nm == 'submissions_by_dropoff_site' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
           Submissions
         </a>
 
         <a href="{% url 'staff_management_view' %}"
-           class="px-3 py-2 rounded {% if nm == 'staff_management_view' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
+          class="px-3 py-2 rounded {% if nm == 'staff_management_view' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
           Staff Management
         </a>
 
         <a href="{% url 'reward_requests' %}"
-           class="px-3 py-2 rounded {% if nm == 'reward_requests' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
+          class="px-3 py-2 rounded {% if nm == 'reward_requests' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
           Rewards
         </a>
 
         <a href="{% url 'diy_dashboard' %}"
-           class="px-3 py-2 rounded {% if nm == 'diy_dashboard' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
+          class="px-3 py-2 rounded {% if nm == 'diy_dashboard' %}bg-gray-900{% else %}hover:bg-gray-700{% endif %}">
           DIY Tutorials
         </a>
       </nav>
+
+      <!-- Bottom: user + logout -->
+      <div class="mt-auto pt-4 border-t border-gray-700">
+        <div class="text-sm text-gray-300 mb-2 truncate">
+          {{ request.user.get_full_name|default:request.user.username }}
+        </div>
+        <form method="post" action="{% url 'logout' %}">
+          {% csrf_token %}
+          <button
+            type="submit"
+            class="w-full inline-flex justify-center items-center rounded-lg bg-gray-700 hover:bg-gray-600 px-3 py-2 text-sm"
+          >
+            Log out
+          </button>
+        </form>
+      </div>
     </aside>
     {% endwith %}
+
 
     <!-- Main Content -->
     <main class="flex-1 p-6">
