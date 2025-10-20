@@ -50,7 +50,7 @@
 
 <!-- ACTIVE STAFF -->
 <h2 class="text-xl font-semibold mb-2">Active Staff</h2>
-<table class="table-fixed w-full bg-white rounded shadow">
+<table class="table-fixed w-full bg-white rounded shadow mb-8">
   <colgroup>
     <col class="w-2/5">{# Name #}
     <col class="w-1/5">{# Barangay #}
@@ -75,8 +75,8 @@
         <div class="flex justify-center gap-2 whitespace-nowrap">
           <button onclick="viewTransactions({{ u.id }}, '{{ u.get_full_name|default:u.username|escapejs }}')"
                   class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded">View Transactions</button>
-          <button onclick="deleteStaff({{ u.id }})"
-                  class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded">Delete</button>
+          <button onclick="deactivateStaff({{ u.id }})"
+                  class="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded">Deactivate</button>
         </div>
       </td>
     </tr>
@@ -88,9 +88,51 @@
   </tbody>
 </table>
 
-<!-- Simple modal for transactions -->
-<div id="tx-modal" class="hidden fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center">
-  <div class="bg-white rounded p-4 max-w-xl w-full">
+<!-- INACTIVE STAFF -->
+<h2 class="text-xl font-semibold mb-2">Inactive Staff</h2>
+<table class="table-fixed w-full bg-white rounded shadow">
+  <colgroup>
+    <col class="w-2/5">{# Name #}
+    <col class="w-1/5">{# Barangay #}
+    <col class="w-1/5">{# Mobile #}
+    <col class="w-1/5">{# Actions #}
+  </colgroup>
+  <thead class="bg-gray-200">
+    <tr>
+      <th class="p-3 text-left">Name</th>
+      <th class="p-3 text-left">Barangay</th>
+      <th class="p-3 text-left">Mobile</th>
+      <th class="p-3 text-center">Actions</th>
+    </tr>
+  </thead>
+  <tbody id="inactive-staff-body">
+    {% for u in inactive_staff %}
+    <tr id="inactive-row-{{ u.id }}">
+      <td class="p-3 align-middle truncate">{{ u.get_full_name|default:u.username }}</td>
+      <td class="p-3 align-middle">{% if u.barangay %}{{ u.barangay.name }}{% endif %}</td>
+      <td class="p-3 align-middle font-mono whitespace-nowrap">{{ u.mobile_number }}</td>
+      <td class="p-3 align-middle">
+        <div class="flex justify-center gap-2 whitespace-nowrap">
+          <button onclick="viewTransactions({{ u.id }}, '{{ u.get_full_name|default:u.username|escapejs }}')"
+                  class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded">View Transactions</button>
+          <button onclick="reactivateStaff({{ u.id }})"
+                  class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded">Reactivate</button>
+          <button onclick="hardDeleteStaff({{ u.id }})"
+                  class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded">Hard Delete</button>
+        </div>
+      </td>
+    </tr>
+    {% empty %}
+    <tr id="no-inactive">
+      <td colspan="4" class="p-3 text-gray-500 text-center">No inactive staff.</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<!-- Transactions modal -->
+<div id="tx-modal" class="hidden fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-40">
+  <div class="bg-white rounded p-4 max-w-3xl w-full shadow-xl">
     <div class="flex items-center justify-between mb-3">
       <h3 id="tx-title" class="text-lg font-semibold">Transactions</h3>
       <button onclick="hideTxModal()" class="px-2 py-1 bg-gray-200 rounded">Close</button>
@@ -100,7 +142,7 @@
 </div>
 
 <script>
-// ---- CSRF helper (works with Django's cookie CSRF) ----
+// ---- CSRF helper ----
 function getCookie(name) {
   const value = `; ${document.cookie}`;
   const parts = value.split(`; ${name}=`);
@@ -109,8 +151,21 @@ function getCookie(name) {
 }
 const CSRF = getCookie('csrftoken');
 
+// POST helper
+function postJson(url, body={}) {
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'X-CSRFToken': CSRF },
+    body: new URLSearchParams(body)
+  }).then(r => {
+    if (!r.ok) throw new Error(`${r.status}`);
+    return r.json().catch(() => ({}));
+  });
+}
+
+// ---- Row builders ----
 function rowHtmlActive(staff) {
-  const safeName = staff.name.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const safeName = (staff.name || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   return `
     <tr id="active-row-${staff.id}">
       <td class="p-3 align-middle truncate">${safeName}</td>
@@ -120,13 +175,33 @@ function rowHtmlActive(staff) {
         <div class="flex justify-center gap-2 whitespace-nowrap">
           <button onclick="viewTransactions(${staff.id}, '${safeName}')"
                   class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded">View Transactions</button>
-          <button onclick="deleteStaff(${staff.id})"
-                  class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded">Delete</button>
+          <button onclick="deactivateStaff(${staff.id})"
+                  class="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded">Deactivate</button>
+        </div>
+      </td>
+    </tr>`;
+}
+function rowHtmlInactive(staff) {
+  const safeName = (staff.name || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  return `
+    <tr id="inactive-row-${staff.id}">
+      <td class="p-3 align-middle truncate">${safeName}</td>
+      <td class="p-3 align-middle">${staff.barangay ?? ""}</td>
+      <td class="p-3 align-middle font-mono whitespace-nowrap">${staff.mobile ?? ""}</td>
+      <td class="p-3 align-middle">
+        <div class="flex justify-center gap-2 whitespace-nowrap">
+          <button onclick="viewTransactions(${staff.id}, '${safeName}')"
+                  class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded">View Transactions</button>
+          <button onclick="reactivateStaff(${staff.id})"
+                  class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded">Reactivate</button>
+          <button onclick="hardDeleteStaff(${staff.id})"
+                  class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded">Hard Delete</button>
         </div>
       </td>
     </tr>`;
 }
 
+// ---- Pending actions ----
 function approveStaff(userId) {
   postJson(`/staff-actions/${userId}/approve/`)
     .then(() => {
@@ -140,13 +215,11 @@ function approveStaff(userId) {
         document.getElementById("pending-staff-body").innerHTML =
           `<tr id="no-pending"><td colspan="4" class="p-3 text-gray-500 text-center">No pending staff.</td></tr>`;
       }
-      if (document.getElementById("no-active")) {
-        document.getElementById("no-active").remove();
-      }
+      document.getElementById("no-active")?.remove();
       document.getElementById("active-staff-body")
         .insertAdjacentHTML("beforeend", rowHtmlActive({id:userId, name, barangay: brgy, mobile}));
 
-      alert("✅ Staff approved successfully.");
+      alert("✅ Staff approved.");
     })
     .catch(e => alert(`Approve failed: ${e.message}`));
 }
@@ -160,23 +233,84 @@ function rejectStaff(userId) {
         document.getElementById("pending-staff-body").innerHTML =
           `<tr id="no-pending"><td colspan="4" class="p-3 text-gray-500 text-center">No pending staff.</td></tr>`;
       }
-      alert("❌ Staff rejected successfully.");
+      alert("❌ Staff rejected.");
     })
     .catch(e => alert(`Reject failed: ${e.message}`));
 }
 
-function deleteStaff(userId) {
-  if (!confirm("Delete this staff account? This cannot be undone.")) return;
-  postJson(`/staff-actions/${userId}/reject/`)
+// ---- Active -> Inactive ----
+function deactivateStaff(userId) {
+  if (!confirm("Deactivate this staff? They will lose access but history stays.")) return;
+  postJson(`/staff-actions/${userId}/deactivate/`)
     .then(() => {
-      document.getElementById(`active-row-${userId}`)?.remove();
+      const row = document.getElementById(`active-row-${userId}`);
+      const name  = row?.querySelector('td:nth-child(1)')?.textContent?.trim() ?? '';
+      const brgy  = row?.querySelector('td:nth-child(2)')?.textContent?.trim() ?? '';
+      const mobile= row?.querySelector('td:nth-child(3)')?.textContent?.trim() ?? '';
+      row?.remove();
+
       if (!document.querySelector("#active-staff-body tr")) {
         document.getElementById("active-staff-body").innerHTML =
           `<tr id="no-active"><td colspan="4" class="p-3 text-gray-500 text-center">No active staff.</td></tr>`;
       }
-      alert("🗑️ Staff deleted successfully.");
+      document.getElementById("no-inactive")?.remove();
+      document.getElementById("inactive-staff-body")
+        .insertAdjacentHTML("beforeend", rowHtmlInactive({id:userId, name, barangay: brgy, mobile}));
+      alert("🌓 Staff deactivated.");
     })
-    .catch(e => alert(`Delete failed: ${e.message}`));
+    .catch(e => alert(`Deactivate failed: ${e.message}`));
+}
+
+// ---- Inactive -> Active ----
+function reactivateStaff(userId) {
+  postJson(`/staff-actions/${userId}/reactivate/`)
+    .then(() => {
+      const row = document.getElementById(`inactive-row-${userId}`);
+      const name  = row?.querySelector('td:nth-child(1)')?.textContent?.trim() ?? '';
+      const brgy  = row?.querySelector('td:nth-child(2)')?.textContent?.trim() ?? '';
+      const mobile= row?.querySelector('td:nth-child(3)')?.textContent?.trim() ?? '';
+      row?.remove();
+
+      if (!document.querySelector("#inactive-staff-body tr")) {
+        document.getElementById("inactive-staff-body").innerHTML =
+          `<tr id="no-inactive"><td colspan="4" class="p-3 text-gray-500 text-center">No inactive staff.</td></tr>`;
+      }
+      document.getElementById("no-active")?.remove();
+      document.getElementById("active-staff-body")
+        .insertAdjacentHTML("beforeend", rowHtmlActive({id:userId, name, barangay: brgy, mobile}));
+      alert("✅ Staff reactivated.");
+    })
+    .catch(e => alert(`Reactivate failed: ${e.message}`));
+}
+
+// ---- Hard delete (danger) ----
+function hardDeleteStaff(userId) {
+  if (!confirm("⚠️ HARD DELETE this staff? This removes the account. History stays only if FK is SET_NULL.")) return;
+  postJson(`/staff-actions/${userId}/hard-delete/`)
+    .then(() => {
+      document.getElementById(`inactive-row-${userId}`)?.remove();
+      if (!document.querySelector("#inactive-staff-body tr")) {
+        document.getElementById("inactive-staff-body").innerHTML =
+          `<tr id="no-inactive"><td colspan="4" class="p-3 text-gray-500 text-center">No inactive staff.</td></tr>`;
+      }
+      alert("🗑️ Staff hard-deleted.");
+    })
+    .catch(e => alert(`Hard delete failed: ${e.message}`));
+}
+
+// ---- Transactions modal ----
+function fmtBottles(arr){
+  if(!Array.isArray(arr)) return '';
+  const pairs = arr.map(x => `${(x.size||'').toUpperCase()}: ${x.count||0}`);
+  return pairs.join(' • ');
+}
+function badge(text, kind){
+  const map = {
+    claimed: 'bg-green-100 text-green-700',
+    pending: 'bg-yellow-100 text-yellow-700',
+    expired: 'bg-gray-100 text-gray-700'
+  };
+  return `<span class="px-2 py-0.5 rounded text-xs ${map[kind]||'bg-gray-100 text-gray-700'}">${text}</span>`;
 }
 
 function viewTransactions(staffId, name) {
@@ -188,16 +322,60 @@ function viewTransactions(staffId, name) {
     .then(r => r.json())
     .then(data => {
       if (!data.success) throw new Error('Failed');
-      const rows = (data.transactions || []).map(t =>
-        `<tr><td class="p-2 border">${t.date}</td><td class="p-2 border">${t.action||''}</td><td class="p-2 border">${t.points||0}</td><td class="p-2 border">${t.notes||''}</td></tr>`
-      ).join('');
+
+      const tx = data.transactions || [];
+      // quick summary
+      let totalSubs = 0, totalPts = 0;
+      tx.forEach(t => {
+        if (t.submission) totalSubs += 1;
+        totalPts += (t.points || 0);
+      });
+
+      const rows = tx.map(t => {
+        const s = t.submission;
+        if (!s) {
+          return `
+            <tr>
+              <td class="p-2 border">${t.date}</td>
+              <td class="p-2 border" colspan="5">${t.action || ''} — <span class="text-gray-500">${t.notes || ''}</span></td>
+            </tr>`;
+        }
+        const bottles = fmtBottles(s.bottle_data);
+        return `
+          <tr class="align-top">
+            <td class="p-2 border whitespace-nowrap">${t.date}</td>
+            <td class="p-2 border">${badge(s.status, s.status)}</td>
+            <td class="p-2 border">${s.proposed_points} → <strong>${s.claimed_points}</strong></td>
+            <td class="p-2 border">${bottles || '—'}</td>
+            <td class="p-2 border">
+              <div class="text-xs text-gray-600">Created: ${s.created_at || '—'}</div>
+              <div class="text-xs text-gray-600">Claimed: ${s.claimed_at || '—'}</div>
+              <div class="text-xs text-gray-600">QR Exp: ${s.qr_expires_at || '—'}</div>
+            </td>
+            <td class="p-2 border">
+              ${s.qr_url ? `<a class="text-blue-600 underline text-sm" href="${s.qr_url}" target="_blank" rel="noopener">QR PNG</a>` : ''}
+            </td>
+          </tr>`;
+      }).join('');
+
       document.getElementById('tx-body').innerHTML = `
-        <div class="overflow-auto max-h-96">
+        <div class="mb-3 text-sm">
+          <span class="mr-4"><strong>Total submissions:</strong> ${totalSubs}</span>
+          <span><strong>Total points (sum of row 'points'):</strong> ${totalPts}</span>
+        </div>
+        <div class="overflow-auto max-h-[28rem]">
           <table class="min-w-full border">
             <thead class="bg-gray-100">
-              <tr><th class="p-2 border">Date</th><th class="p-2 border">Action</th><th class="p-2 border">Points</th><th class="p-2 border">Notes</th></tr>
+              <tr>
+                <th class="p-2 border text-left">Date</th>
+                <th class="p-2 border text-left">Status</th>
+                <th class="p-2 border text-left">Points</th>
+                <th class="p-2 border text-left">Bottles</th>
+                <th class="p-2 border text-left">Timestamps</th>
+                <th class="p-2 border text-left">QR</th>
+              </tr>
             </thead>
-            <tbody>${rows || '<tr><td colspan="4" class="p-3 text-center text-gray-500">No transactions.</td></tr>'}</tbody>
+            <tbody>${rows || '<tr><td colspan="6" class="p-3 text-center text-gray-500">No transactions.</td></tr>'}</tbody>
           </table>
         </div>`;
     })
@@ -205,6 +383,7 @@ function viewTransactions(staffId, name) {
       document.getElementById('tx-body').textContent = 'Failed to load transactions.';
     });
 }
+
 function hideTxModal(){ document.getElementById('tx-modal').classList.add('hidden'); }
 </script>
 {% endblock %}

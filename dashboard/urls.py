@@ -89,9 +89,6 @@ urlpatterns = [
     path("api/staff/monitor/<int:staff_id>/", views.staff_monitor, name="staff_monitor"),
     path("api/config/points/", views.PointsConfigView.as_view(), name="points_config"),
     # Approvals (JSON helpers for server pages)
-    path("staff-actions/<int:user_id>/approve/", views.approve_staff_json, name="approve_staff_json"),
-    path("staff-actions/<int:user_id>/reject/",  views.reject_staff_json,  name="reject_staff_json"),
-
     # ------------------ Auth: Staff ---------------------------------
     path("api/auth/staff/signup/", views.StaffSignupView.as_view(), name="staff_signup"),
     path("api/auth/staff/login/", views.StaffLoginView.as_view(), name="staff_login"),
@@ -119,8 +116,15 @@ urlpatterns = [
     path("api/submissions/<int:submission_id>/qr.png", views.SubmissionQRView.as_view(), name="submission_qr"),
     path("api/submissions/claim/", views.SubmissionClaimView.as_view(), name="submission_claim"),
 
-    # ------------------ Staff activity -------------------------------
-    path("api/staff/<int:staff_id>/transactions/", views.staff_transaction_history, name="staff_transaction_history"),
+    # Staff actions (JSON)
+    path("staff-actions/<int:user_id>/approve/", views.approve_staff_json, name="approve_staff_json"),
+    path("staff-actions/<int:user_id>/reject/",  views.reject_staff_json,  name="reject_staff_json"),
+    path("staff-actions/<int:user_id>/deactivate/", views.deactivate_staff_json, name="deactivate_staff_json"),
+    path("staff-actions/<int:user_id>/reactivate/", views.reactivate_staff_json, name="reactivate_staff_json"),
+    path("staff-actions/<int:user_id>/hard-delete/", views.hard_delete_staff_json, name="hard_delete_staff_json"),
+
+    # Staff transaction history used by the modal
+    path("api/staff/<int:staff_id>/transactions/", views.staff_transaction_history, name="staff_transactions"),
 
     # ------------------ User dashboard data --------------------------
     path("api/user/<int:user_id>/", views.get_user_details, name="get_user_details"),

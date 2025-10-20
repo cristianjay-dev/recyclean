@@ -2071,10 +2071,64 @@ def dropoff_sites_view(request):
     sites = DropOffSite.objects.select_related("barangay").prefetch_related("staff_members")
     return render(request, "dropoff_sites.html", {"sites": sites})
 
+
+# --- Deactivate / Reactivate / Hard delete (admin only) ----------------------
+
+@require_POST
+@require_admin_json
+def deactivate_staff_json(request, user_id: int):
+    """
+    Soft-disable a staff member but KEEP all their data & submissions.
+    - Removes them from any DropOffSite assignments
+    - Flips is_active=False and is_approved=False
+    """
+    staff = get_object_or_404(User, pk=user_id)
+    with transaction.atomic():
+        remove_staff_from_all_sites(staff)
+        staff.is_active = False
+        staff.is_approved = False
+        staff.save(update_fields=["is_active", "is_approved"])
+    return JsonResponse({"success": True})
+
+@require_POST
+@require_admin_json
+def reactivate_staff_json(request, user_id: int):
+    """
+    Re-enable a previously deactivated staff.
+    Leaves barangay unchanged, simply flips flags on.
+    """
+    staff = get_object_or_404(User, pk=user_id)
+    with transaction.atomic():
+        staff.is_active = True
+        staff.is_approved = True
+        staff.is_staff = True
+        staff.groups.add(get_or_create_group("staff"))
+        staff.save(update_fields=["is_active", "is_approved", "is_staff"])
+        # Optional: auto-ensure site if they still have a barangay
+        if staff.barangay_id:
+            ensure_site_and_add_staff(staff.barangay, staff)
+    return JsonResponse({"success": True})
+
+@require_POST
+@require_admin_json
+def hard_delete_staff_json(request, user_id: int):
+    """
+    Optional dangerous op: actually delete the staff account.
+    NOTE: Submissions remain since they belong to Submission.staff (FK) — if your FK
+    is PROTECT you’ll get an error; if it’s SET_NULL, you’ll keep history but without a user.
+    Prefer 'deactivate' in almost all cases.
+    """
+    staff = get_object_or_404(User, pk=user_id)
+    with transaction.atomic():
+        remove_staff_from_all_sites(staff)
+        staff.delete()
+    return JsonResponse({"success": True})
+
+
+
 @require_admin_page
 @ensure_csrf_cookie
 def staff_management_view(request):
-    # Only real applications that are waiting for action
     pending_reqs = (
         StaffApprovalRequest.objects
         .select_related("user", "requested_barangay")
@@ -2084,15 +2138,26 @@ def staff_management_view(request):
 
     active_staff = (
         User.objects
-        .filter(is_approved=True, is_staff=True, is_superuser=False)
+        .filter(is_approved=True, is_staff=True, is_active=True, is_superuser=False)
+        .order_by("date_joined")
+    )
+
+    inactive_staff = (
+        User.objects
+        .filter(is_staff=True, is_active=False, is_superuser=False)
         .order_by("date_joined")
     )
 
     return render(
         request,
         "staff_management.html",
-        {"pending_reqs": pending_reqs, "active_staff": active_staff},
+        {
+            "pending_reqs": pending_reqs,
+            "active_staff": active_staff,
+            "inactive_staff": inactive_staff,  # <-- new
+        },
     )
+
     
 
 
