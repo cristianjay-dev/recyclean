@@ -75,11 +75,11 @@
   <div class="bg-white shadow rounded p-4">
     <h2 class="text-lg font-bold mb-2">
       {% if period == 'year' %}
-        Monthly Submissions (Last 12 Months)
+        Monthly Submissions (This Year)
       {% elif period == 'month' %}
-        Daily Submissions (Last 30 Days)
+        Daily Submissions (This Month)
       {% else %}
-        Daily Submissions (Last 7 Days)
+        Daily Submissions (This Week: Mon–Sun)
       {% endif %}
     </h2>
     <canvas id="activityChart"></canvas>
@@ -233,11 +233,27 @@
   // presets that mirror the same ranges your view uses
   function presetAndExport(kind){
     const today = new Date();
-    const to = new Date(today.getFullYear(), today.getMonth(), today.getDate()); // midnight today
-    let from = new Date(to);
-    if (kind === 'week') from.setDate(to.getDate() - 6);
-    if (kind === 'month') from.setDate(to.getDate() - 29);
-    if (kind === 'year') { from = new Date(to); from.setMonth(to.getMonth()-11); from.setDate(1); }
+    const y = today.getFullYear();
+    const m = today.getMonth(); // 0..11
+    const d = today.getDate();
+
+    let from, to;
+    if (kind === 'week') {
+      // Monday..Sunday for the current week containing "today"
+      const jsWeekday = today.getDay(); // 0=Sun..6=Sat
+      const diffToMonday = (jsWeekday + 6) % 7; // Sun->6, Mon->0, Tue->1, ...
+      from = new Date(y, m, d - diffToMonday);                 // Monday
+      to   = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 6); // Sunday
+    } else if (kind === 'month') {
+      from = new Date(y, m, 1);             // 1st of this month
+      to   = new Date(y, m + 1, 0);         // last day of this month
+    } else if (kind === 'year') {
+      from = new Date(y, 0, 1);             // Jan 1
+      to   = new Date(y, 11, 31);           // Dec 31
+    } else {
+      return;
+    }
+
     document.getElementById('exp_from').value = from.toISOString().slice(0,10);
     document.getElementById('exp_to').value   = to.toISOString().slice(0,10);
     exportCSV();

@@ -37,6 +37,8 @@ from rest_framework.authentication import TokenAuthentication, SessionAuthentica
 from rest_framework.permissions import BasePermission
 from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
 from django.utils.dateparse import parse_datetime
+from calendar import monthrange
+
 
 from rest_framework.response import Response
 from urllib.parse import urlparse, parse_qs
@@ -2213,40 +2215,42 @@ def staff_transaction_history(request, staff_id: int):
 
 def _period_bounds(param: str) -> Tuple[date, date, str, List[str]]:
     """
-    Returns (start_date, end_date_exclusive, period_key, label_list) for site detail chart.
+    Calendar-aligned ranges for site detail chart.
+      - week : Monday .. next Monday (end exclusive)
+      - month: 1st of current month .. 1st of next month (end exclusive)
+      - year : Jan 1 of current year .. Jan 1 of next year (end exclusive)
+    Returns (start_date, end_date_exclusive, period_key, labels)
     """
     today = today_ph()
+    param = (param or "week").lower()
+
     if param == "year":
-        # last 12 months (inclusive of current month)
-        labels = []
-        months = []
-        y, m = today.year, today.month
-        for i in range(11, -1, -1):
-            yy = y if m - i > 0 else y - 1
-            mm = ((m - i - 1) % 12) + 1
-            months.append((yy, mm))
-            labels.append(f"{yy}-{mm:02d}")
-        start = date(months[0][0], months[0][1], 1)
-        # exclusive end: first day of next month after last
-        last_y, last_m = months[-1]
-        if last_m == 12:
-            end = date(last_y + 1, 1, 1)
-        else:
-            end = date(last_y, last_m + 1, 1)
+        start = date(today.year, 1, 1)
+        end   = date(today.year + 1, 1, 1)
+        # Labels: Jan..Dec of THIS year, as YYYY-MM to match your series code
+        labels = [f"{today.year}-{m:02d}" for m in range(1, 13)]
         return start, end, "year", labels
 
     if param == "month":
-        # last 30 days
-        start = today - timedelta(days=29)
-        end = today + timedelta(days=1)
-        labels = [(start + timedelta(days=i)).strftime("%b %d") for i in range(30)]
+        start = date(today.year, today.month, 1)
+        # first day of next month
+        if today.month == 12:
+            end = date(today.year + 1, 1, 1)
+        else:
+            end = date(today.year, today.month + 1, 1)
+        # Labels: every calendar day in this month (e.g., "Oct 01" .. "Oct 31")
+        last_dom = monthrange(today.year, today.month)[1]
+        labels = [date(today.year, today.month, d).strftime("%b %d") for d in range(1, last_dom + 1)]
         return start, end, "month", labels
 
-    # default week
-    start = today - timedelta(days=6)
-    end = today + timedelta(days=1)
+    # default: week (Mon..Sun)
+    # Monday index = 0
+    sow = today - timedelta(days=today.weekday())   # Monday of this week
+    start = sow
+    end   = sow + timedelta(days=7)                 # next Monday (exclusive)
     labels = [(start + timedelta(days=i)).strftime("%b %d") for i in range(7)]
     return start, end, "week", labels
+
 
 @require_admin_page
 def dropoff_site_detail(request, site_id: int):
