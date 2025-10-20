@@ -69,6 +69,11 @@ from .services.reloadly import (
     ReloadlyError,
 )
 
+# add near your imports (top of file)
+from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
+signer = TimestampSigner(salt="submission-qr")
+
+
 LOGGER = logging.getLogger(__name__)
 COUNTRY = getattr(settings, "RELOADLY_COUNTRY_CODE", "PH")
 TWO_DP = Decimal("0.01")
@@ -1825,21 +1830,43 @@ class SubmissionIntakeView(views.APIView):
             status=201,
         )
 
-@method_decorator(require_staff_json, name='dispatch')
+@method_decorator(csrf_exempt, name="dispatch")   # image loads with no cookies/headers
 class SubmissionQRView(View):
-    """GET /api/submissions/<id>/qr.png → QR PNG (only while valid)"""
+    """GET /api/submissions/<id>/qr.png?sig=<signed> → QR PNG (only while valid)"""
     def get(self, request, submission_id: int):
+        sig = request.GET.get("sig", "")
+        if not sig:
+            return HttpResponse("Missing signature.", status=403)
+
+        # Verify signature is <= 1 hour old
         try:
-            # need status + expiry to gate image
+            payload = signer.unsign(sig, max_age=3600)  # 1 hour window
+        except SignatureExpired:
+            return HttpResponse("QR link expired.", status=410)
+        except BadSignature:
+            return HttpResponse("Invalid QR link.", status=403)
+
+        # payload = "<id>:<qr_token>"
+        try:
+            id_str, token = payload.split(":", 1)
+        except ValueError:
+            return HttpResponse("Invalid payload.", status=403)
+        if str(submission_id) != id_str:
+            return HttpResponse("Mismatched submission id.", status=403)
+
+        try:
             sub = Submission.objects.only("qr_token", "qr_expires_at", "status").get(pk=submission_id)
         except Submission.DoesNotExist:
             raise Http404
 
-        # Auto-expire if needed
+        # Token must still match the DB (guards against reuse after rotation)
+        if sub.qr_token != token:
+            return HttpResponse("Invalid token.", status=403)
+
+        # Enforce server-side status/expiry as well
         now = timezone.now()
         if sub.status == "pending" and sub.qr_expires_at and sub.qr_expires_at < now:
             Submission.objects.filter(pk=submission_id, status="pending").update(status="expired")
-            # Stop serving QR once expired
             return HttpResponse("QR expired.", status=410)
 
         if sub.status != "pending":
@@ -1851,9 +1878,7 @@ class SubmissionQRView(View):
             return HttpResponse("QR code generator not installed.", status=500)
 
         img = qrcode.make(sub.qr_token)
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        buf.seek(0)
+        buf = io.BytesIO(); img.save(buf, format="PNG"); buf.seek(0)
         return HttpResponse(buf.read(), content_type="image/png")
 
 
@@ -2280,14 +2305,15 @@ def staff_transaction_history(request, staff_id: int):
 
             # --- Choose the number to show in the list ---
             # claimed → claimed_points; pending → proposed_points; expired → proposed_points
-            points_for_row = int(
-                (sub.claimed_points if sub.status == "claimed" else sub.proposed_points) or 0
-            )
+            points_for_row = int((sub.claimed_points if sub.status == "claimed" else sub.proposed_points) or 0)
 
-            qr_url = request.build_absolute_uri(reverse("submission_qr", args=[sub.id]))
-            if admin_key:
-                join = "&" if "?" in qr_url else "?"
-                qr_url = f"{qr_url}{join}admin_key={admin_key}"
+
+            qr_url = None
+            if sub.status == "pending":
+                signed = signer.sign(f"{sub.id}:{sub.qr_token}")
+                qr_url = request.build_absolute_uri(
+                    reverse("submission_qr", args=[sub.id])
+                ) + f"?sig={signed}"
 
             sub_dict = {
                 "id": sub.id,
@@ -2298,7 +2324,8 @@ def staff_transaction_history(request, staff_id: int):
                 "claimed_points": int(sub.claimed_points or 0),
                 "proposed_points": int(sub.proposed_points or 0),
                 "bottle_data": sub.bottle_data or [],
-                "qr_url": qr_url if sub.status == "pending" else None,  # hide link if no longer valid
+                "qr_url": qr_url,  # will be None if not pending
+                "display_points": int((sub.claimed_points if sub.status == "claimed" else sub.proposed_points) or 0),
             }
 
         items.append({
