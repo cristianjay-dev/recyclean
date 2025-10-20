@@ -1800,7 +1800,7 @@ class SubmissionIntakeView(views.APIView):
 
         proposed_points = compute_points(bottle_data)
         qr_token = secrets.token_urlsafe(24)
-        expires = timezone.now() + timedelta(minutes=10)
+        expires = timezone.now() + timedelta(hours=1)
 
         with transaction.atomic():
             sub = Submission.objects.create(
@@ -1809,7 +1809,7 @@ class SubmissionIntakeView(views.APIView):
                 bottle_data=bottle_data,
                 proposed_points=proposed_points,
                 qr_token=qr_token,
-                qr_expires_at=expires,
+                qr_expires_at=expires,   # <- 1h from now
                 status="pending",
                 source="manual",
             )
@@ -1827,15 +1827,26 @@ class SubmissionIntakeView(views.APIView):
 
 @method_decorator(require_staff_json, name='dispatch')
 class SubmissionQRView(View):
-    """GET /api/submissions/<id>/qr.png → QR PNG of the submission's qr_token"""
+    """GET /api/submissions/<id>/qr.png → QR PNG (only while valid)"""
     def get(self, request, submission_id: int):
         try:
-            sub = Submission.objects.only("qr_token").get(pk=submission_id)
+            # need status + expiry to gate image
+            sub = Submission.objects.only("qr_token", "qr_expires_at", "status").get(pk=submission_id)
         except Submission.DoesNotExist:
             raise Http404
 
+        # Auto-expire if needed
+        now = timezone.now()
+        if sub.status == "pending" and sub.qr_expires_at and sub.qr_expires_at < now:
+            Submission.objects.filter(pk=submission_id, status="pending").update(status="expired")
+            # Stop serving QR once expired
+            return HttpResponse("QR expired.", status=410)
+
+        if sub.status != "pending":
+            return HttpResponse("QR not available.", status=410)
+
         try:
-            import qrcode  # lazy import
+            import qrcode
         except ImportError:
             return HttpResponse("QR code generator not installed.", status=500)
 
@@ -1844,6 +1855,7 @@ class SubmissionQRView(View):
         img.save(buf, format="PNG")
         buf.seek(0)
         return HttpResponse(buf.read(), content_type="image/png")
+
 
 
 class SubmissionClaimView(views.APIView):
@@ -1864,8 +1876,9 @@ class SubmissionClaimView(views.APIView):
                 return Response({"success": False, "error": "QR already used or invalid state."}, status=400)
 
             if sub.qr_expires_at and sub.qr_expires_at < timezone.now():
-                sub.status = "expired"
-                sub.save(update_fields=["status"])
+                if sub.status == "pending":
+                    sub.status = "expired"           # ensure it's flipped
+                    sub.save(update_fields=["status"])
                 return Response({"success": False, "error": "QR expired."}, status=400)
 
             sub.claimed_by = request.user
@@ -2243,7 +2256,6 @@ def staff_transaction_history(request, staff_id: int):
 
     # verify staff exists
     staff = get_object_or_404(User, pk=staff_id)
-
     admin_key = getattr(settings, "ADMIN_SHARED_KEY", None)
 
     txs = (
@@ -2253,11 +2265,25 @@ def staff_transaction_history(request, staff_id: int):
         .order_by("-created_at")
     )
 
+    now = timezone.now()
     items = []
     for t in txs:
         sub = t.submission
         sub_dict = None
+        points_for_row = 0
+
         if sub:
+            # --- Auto-expire if pending & past expiry ---
+            if sub.status == "pending" and sub.qr_expires_at and sub.qr_expires_at < now:
+                Submission.objects.filter(pk=sub.id, status="pending").update(status="expired")
+                sub.status = "expired"
+
+            # --- Choose the number to show in the list ---
+            # claimed → claimed_points; pending → proposed_points; expired → proposed_points
+            points_for_row = int(
+                (sub.claimed_points if sub.status == "claimed" else sub.proposed_points) or 0
+            )
+
             qr_url = request.build_absolute_uri(reverse("submission_qr", args=[sub.id]))
             if admin_key:
                 join = "&" if "?" in qr_url else "?"
@@ -2272,13 +2298,14 @@ def staff_transaction_history(request, staff_id: int):
                 "claimed_points": int(sub.claimed_points or 0),
                 "proposed_points": int(sub.proposed_points or 0),
                 "bottle_data": sub.bottle_data or [],
-                "qr_url": qr_url,
+                "qr_url": qr_url if sub.status == "pending" else None,  # hide link if no longer valid
             }
 
         items.append({
             "action": t.action,
             "notes": t.notes or "",
-            "points": int(getattr(sub, "claimed_points", 0) or 0),
+            # CHANGED: use points_for_row so the app list shows correct number
+            "points": int(points_for_row),
             "date": timezone.localtime(t.created_at).strftime("%Y-%m-%d %H:%M"),
             "submission": sub_dict,
         })
