@@ -2270,6 +2270,21 @@ def dropoff_site_detail(request, site_id: int):
 
     # Table queryset WITH select_related; no .only() calls here
     submissions = base_qs.select_related("staff", "claimed_by")
+    
+    for s in submissions:
+        small = large = 0
+        for b in (s.bottle_data or []):
+            size = (b.get("size") or "").lower()
+            try:
+                cnt = int(b.get("count") or b.get("quantity") or 0)
+            except Exception:
+                cnt = 0
+            if size == "small":
+                small += cnt
+            elif size == "large":
+                large += cnt
+        s.small_count = small
+        s.large_count = large
 
     # Totals (over selected period)
     total_submissions = base_qs.count()

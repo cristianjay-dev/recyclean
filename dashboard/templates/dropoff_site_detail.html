@@ -116,27 +116,11 @@
           {% if sub.claimed_by %}{{ sub.claimed_by.get_full_name|default:sub.claimed_by.username }}{% else %}<span class="text-gray-500">Unclaimed</span>{% endif %}
         </td>
 
-        {# Small count: prints the matching value if present; otherwise stays blank (or 0 if bottle_data is empty) #}
-        <td class="px-4 py-2 border">
-          {% for b in sub.bottle_data %}
-            {% if b.size == 'small' %}
-              {{ b.count|default:b.quantity }}
-            {% endif %}
-          {% empty %}
-            0
-          {% endfor %}
-        </td>
+        {# Small #}
+        <td class="px-4 py-2 border">{{ sub.small_count|default:0 }}</td>
 
         {# Large count #}
-        <td class="px-4 py-2 border">
-          {% for b in sub.bottle_data %}
-            {% if b.size == 'large' %}
-              {{ b.count|default:b.quantity }}
-            {% endif %}
-          {% empty %}
-            0
-          {% endfor %}
-        </td>
+        <td class="px-4 py-2 border">{{ sub.large_count|default:0 }}</td>
 
         <td class="px-4 py-2 border">{{ sub.proposed_points|default:0 }}</td>
         <td class="px-4 py-2 border">{{ sub.claimed_points|default:0 }}</td>
