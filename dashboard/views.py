@@ -39,7 +39,6 @@ from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
 from django.utils.dateparse import parse_datetime
 from calendar import monthrange
 
-
 from rest_framework.response import Response
 from urllib.parse import urlparse, parse_qs
 from decimal import Decimal, ROUND_HALF_UP
@@ -335,6 +334,13 @@ def require_admin_json(view_func):
             return JsonResponse({"success": False, "error": "Admin access required."}, status=403)
         return view_func(request, *args, **kwargs)
     return _wrapped
+
+class IsAdminOrStaff(BasePermission):
+    def has_permission(self, request, view):
+        # allow shared-key/dev bypass too
+        if _admin_bypass_ok(request):
+            return True
+        return _is_admin_only(request.user) or _is_real_staff(request.user)
 
 
 class IsAdminOnly(BasePermission):
@@ -2219,18 +2225,25 @@ def submissions_by_dropoff_site(request, site_id: int):
     return render(request, "submissions_by_site.html", {"site": site, "submissions": submissions})
 
 
-
 @api_view(["GET"])
-@permission_classes([IsStaffish])
+@authentication_classes([TokenAuthentication, SessionAuthentication, BasicAuthentication])
+@permission_classes([IsAdminOrStaff])
 def staff_transaction_history(request, staff_id: int):
     """
     GET /api/staff/<staff_id>/transactions/
-    Returns newest-first history with submission details + QR URL.
+    - Admin: can view any staff history
+    - Staff: can only view their own history
+    - Mobile app: use "Authorization: Token <key>"
+    - Admin page: uses session cookie automatically
     """
+    # --- scope: staff can only see their own
+    if not (_admin_bypass_ok(request) or _is_admin_only(request.user)):
+        if not (request.user.is_authenticated and request.user.id == staff_id):
+            return Response({"success": False, "error": "Forbidden."}, status=403)
+
     # verify staff exists
     staff = get_object_or_404(User, pk=staff_id)
 
-    # if you configured ADMIN_SHARED_KEY, include it so the mobile app can open the PNG
     admin_key = getattr(settings, "ADMIN_SHARED_KEY", None)
 
     txs = (
@@ -2245,29 +2258,25 @@ def staff_transaction_history(request, staff_id: int):
         sub = t.submission
         sub_dict = None
         if sub:
-            qr_url = request.build_absolute_uri(
-                reverse("submission_qr", args=[sub.id])
-
-            )
-            # so staff mobile can fetch the PNG without cookie/session
+            qr_url = request.build_absolute_uri(reverse("submission_qr", args=[sub.id]))
             if admin_key:
                 join = "&" if "?" in qr_url else "?"
                 qr_url = f"{qr_url}{join}admin_key={admin_key}"
 
             sub_dict = {
                 "id": sub.id,
-                "status": sub.status,  # pending | claimed | expired
+                "status": sub.status,
                 "created_at": localtime(sub.created_at).isoformat(),
                 "claimed_at": (localtime(sub.claimed_at).isoformat() if sub.claimed_at else None),
                 "qr_expires_at": (localtime(sub.qr_expires_at).isoformat() if sub.qr_expires_at else None),
                 "claimed_points": int(sub.claimed_points or 0),
                 "proposed_points": int(sub.proposed_points or 0),
                 "bottle_data": sub.bottle_data or [],
-                "qr_url": qr_url,  # PNG
+                "qr_url": qr_url,
             }
 
         items.append({
-            "action": t.action,                # e.g. "submission_created"
+            "action": t.action,
             "notes": t.notes or "",
             "points": int(getattr(sub, "claimed_points", 0) or 0),
             "date": timezone.localtime(t.created_at).strftime("%Y-%m-%d %H:%M"),
