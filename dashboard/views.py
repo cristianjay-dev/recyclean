@@ -391,6 +391,14 @@ def require_staff_json(view_func):
         return view_func(request, *args, **kwargs)
     return _wrapped
 
+class IsResident(BasePermission):
+    def has_permission(self, request, view):
+        u = request.user
+        return bool(
+            u and u.is_authenticated and u.is_active
+            and not u.is_staff                      # hard-stop staff
+            and u.groups.filter(name="resident").exists()
+        )
 
 class IsStaffish(BasePermission):
     def has_permission(self, request, view):
@@ -1089,7 +1097,7 @@ def diy_delete_tutorial(request, tutorial_id: int):
 # ---- DIY submission (mobile/user uploads proof) ----
 class DIYSubmitView(views.APIView):
     authentication_classes = [TokenAuthentication]
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsResident]
     parser_classes = [MultiPartParser]
 
     def post(self, request):
@@ -1153,7 +1161,7 @@ def parse_amount_to_decimal(amount_str: str) -> Decimal:
 
 class RedeemRewardView(views.APIView):
     authentication_classes = [TokenAuthentication]
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsResident]
 
     def post(self, request):
         try:
@@ -1650,11 +1658,17 @@ class ResidentLoginView(views.APIView):
         if not user:
             return Response({"success": False, "error": "Account not found."}, status=404)
 
+        # 🚫 block staff accounts entirely from resident app
+        if user.is_staff:
+            return Response({"success": False, "error": "Use the staff app to sign in."}, status=403)
+
+        # must already be a resident
+        if not user.groups.filter(name="resident").exists():
+            return Response({"success": False, "error": "This account is not a resident account."}, status=403)
+
         user_auth = authenticate(username=user.username, password=password)
         if not user_auth:
             return Response({"success": False, "error": "Incorrect password."}, status=400)
-
-        user.groups.add(get_or_create_group("resident"))
 
         token, _ = Token.objects.get_or_create(user=user)
         return Response({
@@ -1669,6 +1683,7 @@ class ResidentLoginView(views.APIView):
                 "points": user.total_points,
             },
         })
+
     
 class MeView(views.APIView):
     authentication_classes = [TokenAuthentication]
@@ -1884,7 +1899,9 @@ class SubmissionQRView(View):
 
 
 class SubmissionClaimView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsResident]   # ⬅️ only residents
+
     parser_classes = [JSONParser]
 
     def post(self, request):
@@ -1892,17 +1909,26 @@ class SubmissionClaimView(views.APIView):
         ser.is_valid(raise_exception=True)
         token = ser.validated_data["qr_token"]
 
+        # (optional defense-in-depth)
+        if request.user.is_staff:
+            return Response({"success": False, "error": "Staff cannot claim via resident endpoint."}, status=403)
+
         with transaction.atomic():
             sub = Submission.objects.select_for_update().filter(qr_token=token).first()
             if not sub:
                 return Response({"success": False, "error": "Invalid QR."}, status=404)
 
             if sub.status != "pending":
+                if sub.status == "claimed" and sub.claimed_by_id == request.user.id:
+                    return Response(
+                        {"success": True, "claimed_points": sub.claimed_points, "balance": request.user.total_points},
+                        status=200
+                    )
                 return Response({"success": False, "error": "QR already used or invalid state."}, status=400)
 
             if sub.qr_expires_at and sub.qr_expires_at < timezone.now():
                 if sub.status == "pending":
-                    sub.status = "expired"           # ensure it's flipped
+                    sub.status = "expired"
                     sub.save(update_fields=["status"])
                 return Response({"success": False, "error": "QR expired."}, status=400)
 
@@ -1910,7 +1936,7 @@ class SubmissionClaimView(views.APIView):
             sub.claimed_at = timezone.now()
             sub.claimed_points = sub.proposed_points
             sub.status = "claimed"
-            sub.save(update_fields=["claimed_by", "claimed_at", "claimed_points", "status", "updated_at"])
+            sub.save(update_fields=["claimed_by","claimed_at","claimed_points","status","updated_at"])
 
             user = request.user
             user.total_points += sub.claimed_points
@@ -1926,6 +1952,7 @@ class SubmissionClaimView(views.APIView):
             )
 
         return Response({"success": True, "claimed_points": sub.claimed_points, "balance": user.total_points})
+
 
 
 # ==============================================================================
@@ -1983,11 +2010,12 @@ def staff_metrics(request, staff_id: int):
             total_plastic_count += _sum_bottles(s.bottle_data)
         breakdown = [{"label": k, "value": counts_by_month[k]} for k in labels]
     else:
-        # daily buckets using "%b %d"
-        c = Counter([localtime(s.created_at).date().strftime("%b %d") for s in qs])
+        # daily buckets with ISO keys
+        c = Counter([localtime(s.created_at).date().strftime("%Y-%m-%d") for s in qs])
         for s in qs:
             total_plastic_count += _sum_bottles(s.bottle_data)
         breakdown = [{"label": lbl, "value": int(c.get(lbl, 0))} for lbl in labels]
+
 
     # Lifetime / all-time submissions by this staff
     lifetime_submissions = Submission.objects.filter(staff_id=staff_id).count()
@@ -2343,42 +2371,30 @@ def staff_transaction_history(request, staff_id: int):
 
 
 def _period_bounds(param: str) -> Tuple[date, date, str, List[str]]:
-    """
-    Calendar-aligned ranges for site detail chart.
-      - week : Monday .. next Monday (end exclusive)
-      - month: 1st of current month .. 1st of next month (end exclusive)
-      - year : Jan 1 of current year .. Jan 1 of next year (end exclusive)
-    Returns (start_date, end_date_exclusive, period_key, labels)
-    """
     today = today_ph()
     param = (param or "week").lower()
 
     if param == "year":
         start = date(today.year, 1, 1)
         end   = date(today.year + 1, 1, 1)
-        # Labels: Jan..Dec of THIS year, as YYYY-MM to match your series code
-        labels = [f"{today.year}-{m:02d}" for m in range(1, 13)]
+        labels = [f"{today.year}-{m:02d}" for m in range(1, 13)]  # YYYY-MM
         return start, end, "year", labels
 
     if param == "month":
         start = date(today.year, today.month, 1)
-        # first day of next month
-        if today.month == 12:
-            end = date(today.year + 1, 1, 1)
-        else:
-            end = date(today.year, today.month + 1, 1)
-        # Labels: every calendar day in this month (e.g., "Oct 01" .. "Oct 31")
+        end = date(today.year + (1 if today.month == 12 else 0),
+                   1 if today.month == 12 else today.month + 1, 1)
         last_dom = monthrange(today.year, today.month)[1]
-        labels = [date(today.year, today.month, d).strftime("%b %d") for d in range(1, last_dom + 1)]
+        labels = [f"{today.year}-{today.month:02d}-{d:02d}" for d in range(1, last_dom + 1)]  # YYYY-MM-DD
         return start, end, "month", labels
 
-    # default: week (Mon..Sun)
-    # Monday index = 0
-    sow = today - timedelta(days=today.weekday())   # Monday of this week
+    # week (Mon..next Mon)
+    sow = today - timedelta(days=today.weekday())
     start = sow
-    end   = sow + timedelta(days=7)                 # next Monday (exclusive)
-    labels = [(start + timedelta(days=i)).strftime("%b %d") for i in range(7)]
+    end   = sow + timedelta(days=7)
+    labels = [(start + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]  # YYYY-MM-DD
     return start, end, "week", labels
+
 
 
 @require_admin_page
@@ -2453,11 +2469,13 @@ def dropoff_site_detail(request, site_id: int):
     else:
         from collections import Counter as C2
         day_keys = [
-            localtime(dt).date().strftime("%b %d")
+            localtime(dt).date().strftime("%Y-%m-%d")
             for dt in base_qs.values_list("created_at", flat=True)
         ]
         c = C2(day_keys)
         series_values = [int(c.get(lbl, 0)) for lbl in labels]
+
+
 
     return render(
         request,
