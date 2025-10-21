@@ -11,7 +11,7 @@
         <h1 class="text-2xl font-bold">DIY Tutorials Management</h1>
         <p class="text-gray-600">
           Add tutorials to your manual pool, toggle <span class="font-semibold">Active</span> to include in the rotation,
-          and the app will show <span class="font-semibold">3 tutorials per {{ DIY_PERIOD|default:"week" }}</span>.
+          and the app will show <span class="font-semibold">{{ DIY_DAILY_COUNT }} tutorials per {{ DIY_PERIOD|default:"week" }}</span>.
         </p>
       </div>
 
@@ -140,24 +140,24 @@
       <div class="grid md:grid-cols-2 gap-4">
         <div>
           <label for="id_title" class="block text-sm font-medium">Title</label>
-          {{ form.title|add_class:"mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500" }}
+          {{ form.title.as_widget(attrs={'class': 'mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500'}) }}
         </div>
         <div>
           <label for="id_points_on_submit" class="block text-sm font-medium">Points on Submit</label>
-          {{ form.points_on_submit|add_class:"mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500" }}
+          {{ form.points_on_submit.as_widget(attrs={'class': 'mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500'}) }}
         </div>
       </div>
 
       <div>
         <label for="id_description" class="block text-sm font-medium">Instructions / Description</label>
-        {{ form.description|add_class:"mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500" }}
+        {{ form.description.as_widget(attrs={'class': 'mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500'}) }}
         <p class="text-xs text-gray-500 mt-1">Tip: Start lines with “-”, “*”, or “•” for bullet points.</p>
       </div>
 
       <div class="grid md:grid-cols-2 gap-4">
         <div>
           <label for="id_video_url" class="block text-sm font-medium">Video URL (YouTube)</label>
-          {{ form.video_url|add_class:"mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500" }}
+          {{ form.video_url.as_widget(attrs={'class': 'mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500'}) }}
           <button type="button" id="fetchYTMetaBtn"
                   class="mt-2 inline-flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300/60 transition">
             Auto-fill from YouTube
@@ -165,24 +165,24 @@
         </div>
         <div>
           <label for="id_duration_seconds" class="block text-sm font-medium">Duration (seconds)</label>
-          {{ form.duration_seconds|add_class:"mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500" }}
+          {{ form.duration_seconds.as_widget(attrs={'class': 'mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500'}) }}
         </div>
       </div>
 
       <div class="grid md:grid-cols-2 gap-4 items-start">
         <div>
           <label for="id_thumbnail" class="block text-sm font-medium">Thumbnail</label>
-          {{ form.thumbnail|add_class:"mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500 file:mr-3 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 hover:file:bg-gray-200" }}
+          {{ form.thumbnail.as_widget(attrs={'class': 'mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500 file:mr-3 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 hover:file:bg-gray-200'}) }}
           <p class="text-xs text-gray-500 mt-1">Leave empty to keep current image when editing.</p>
           <img id="ytThumbPreview" alt="" class="mt-2 hidden w-40 h-24 object-cover rounded-lg ring-1 ring-black/5" />
         </div>
         <div class="flex items-center gap-2 pt-6">
           <label for="id_is_active" class="text-sm font-medium">Active in Pool</label>
-          {{ form.is_active|add_class:"h-5 w-5 rounded text-blue-600 focus:ring-blue-500" }}
+          {{ form.is_active.as_widget(attrs={'class': 'h-5 w-5 rounded text-blue-600 focus:ring-blue-500'}) }}
         </div>
       </div>
 
-      <button type="submit"
+      <button id="saveBtn" type="submit"
               class="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white font-semibold shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/50 active:scale-[.99] transition">
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 -ml-0.5" viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14a1 1 0 001-1v-9l-6-6H6a1 1 0 00-1 1v14a1 1 0 001 1zm7-13v5h5"/></svg>
         Save Tutorial
@@ -191,7 +191,7 @@
   </div>
 </div>
 
-<!-- SCRIPT SECTION (unchanged behavior; just keeping the new UI) -->
+<!-- SCRIPT SECTION -->
 <script>
 function getCSRFToken() {
   const match = document.cookie.match(/(?:^|;)\s*csrftoken=([^;]+)/);
@@ -235,10 +235,12 @@ function renderTodayList(data) {
 }
 
 async function loadToday(opts = {}) {
+  const disable = (b, v) => { if (!b) return; b.disabled = v; b.setAttribute('aria-disabled', v); };
   try {
+    disable(reloadBtn, true); disable(refreshBtn, true);
     const base = "{% url 'api_diy_daily' %}";
     const params = new URLSearchParams();
-    params.set("count", "3");
+    params.set("count", "{{ DIY_DAILY_COUNT }}");
     if (opts.refresh) params.set("refresh", "1");
     const res = await fetch(`${base}?${params.toString()}`);
     if (res.status === 204) { renderTodayList({ tutorials: [] }); return; }
@@ -247,6 +249,8 @@ async function loadToday(opts = {}) {
     renderTodayList(data);
   } catch (e) {
     todayBox.innerHTML = '<p class="text-red-600">Failed to load selection.</p>';
+  } finally {
+    disable(reloadBtn, false); disable(refreshBtn, false);
   }
 }
 
@@ -289,49 +293,78 @@ function openEditModal(id, title, description, video_url, duration_seconds, poin
 
 function closeModal() { modal.classList.add('hidden'); }
 
-// Save (create/update)
+// Save (create/update) with double-submit guard
+let saving = false;
 diyForm.addEventListener('submit', async function(e) {
   e.preventDefault();
-  const isEditing = !!tutorialIdInput.value;
-  const url = isEditing
-    ? `{% url 'diy_update_tutorial' 0 %}`.replace('0', tutorialIdInput.value)
-    : `{% url 'diy_create_tutorial' %}`;
+  if (saving) return;
+  saving = true;
 
-  const fd = new FormData(this);
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "X-CSRFToken": getCSRFToken() },
-    body: fd
-  });
-  if (handleAuthErrors(res)) return;
-  const data = await res.json();
-  if (data.success) {
-    alert(`✅ Tutorial ${isEditing ? 'updated' : 'added'} successfully.`);
-    location.reload();
-  } else {
-    let msg = '❌ Error saving tutorial.\n';
-    if (data.errors) {
-      for (const k in data.errors) {
-        if (Array.isArray(data.errors[k])) msg += `${k}: ${data.errors[k][0]}\n`;
-        else msg += `${k}: ${data.errors[k]}\n`;
-      }
+  const btn = document.getElementById('saveBtn');
+  const originalHTML = btn.innerHTML;
+  btn.disabled = true;
+  btn.setAttribute('aria-disabled', 'true');
+  btn.innerHTML = 'Saving…';
+
+  try {
+    const isEditing = !!tutorialIdInput.value;
+    const url = isEditing
+      ? `{% url 'diy_update_tutorial' 0 %}`.replace('0', tutorialIdInput.value)
+      : `{% url 'diy_create_tutorial' %}`;
+
+    const fd = new FormData(this);
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "X-CSRFToken": getCSRFToken() },
+      body: fd
+    });
+    if (handleAuthErrors(res)) return;
+    const data = await res.json();
+    if (data.success) {
+      alert(`✅ Tutorial ${isEditing ? 'updated' : 'added'} successfully.`);
+      location.reload();
     } else {
-      msg += data.error || 'Unknown error';
+      let msg = '❌ Error saving tutorial.\n';
+      if (data.errors) {
+        for (const k in data.errors) {
+          if (Array.isArray(data.errors[k])) msg += `${k}: ${data.errors[k][0]}\n`;
+          else msg += `${k}: ${data.errors[k]}\n`;
+        }
+      } else {
+        msg += data.error || 'Unknown error';
+      }
+      alert(msg);
     }
-    alert(msg);
+  } catch (err) {
+    alert('❌ Network error while saving.');
+  } finally {
+    saving = false;
+    btn.disabled = false;
+    btn.removeAttribute('aria-disabled');
+    btn.innerHTML = originalHTML;
   }
 });
 
+// Delete with double-click guard
+const deletingIds = new Set();
 async function deleteTutorial(id) {
+  if (deletingIds.has(id)) return;
   if (!confirm('Delete this tutorial permanently?')) return;
-  const res = await fetch(`{% url 'diy_delete_tutorial' 0 %}`.replace('0', id), {
-    method: "POST",
-    headers: { "X-CSRFToken": getCSRFToken() }
-  });
-  if (handleAuthErrors(res)) return;
-  const data = await res.json();
-  if (data.success) location.reload();
-  else alert('❌ Delete failed: ' + (data.error || 'Unknown error'));
+  deletingIds.add(id);
+  try {
+    const res = await fetch(`{% url 'diy_delete_tutorial' 0 %}`.replace('0', id), {
+      method: "POST",
+      headers: { "X-CSRFToken": getCSRFToken() }
+    });
+    if (handleAuthErrors(res)) return;
+    const data = await res.json();
+    if (data.success) location.reload();
+    else alert('❌ Delete failed: ' + (data.error || 'Unknown error'));
+  } catch (e) {
+    alert('❌ Network error while deleting.');
+  } finally {
+    deletingIds.delete(id);
+  }
 }
 
 // ---------- YouTube auto-fill ----------

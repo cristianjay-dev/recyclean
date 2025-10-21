@@ -750,17 +750,23 @@ def user_history(request, user_id: int):
 # ==============================================================================
 # DIY management (server page + APIs your template uses)
 # ==============================================================================
+
 @require_admin_page
 @ensure_csrf_cookie
 def diy_dashboard(request):
     form = DIYTutorialForm()
     tutorials = DIYTutorial.objects.order_by("-created_at")
-    return render(request, "diy_dashboard.html", {"form": form, "tutorials": tutorials})
+    return render(
+        request,
+        "diy_dashboard.html",
+        {
+            "form": form,
+            "tutorials": tutorials,
+            "DIY_PERIOD": getattr(settings, "DIY_PERIOD", "week"),
+            "DIY_DAILY_COUNT": int(getattr(settings, "DIY_DAILY_COUNT", 3)),
+        },
+    )
 
-
-# views.py
-
-DAILY_COUNT_DEFAULT = getattr(settings, "DIY_DAILY_COUNT", 3)
 
 def _abs_or_none(request, f):
     return request.build_absolute_uri(f.url) if f else None
