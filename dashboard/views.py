@@ -2324,7 +2324,8 @@ def staff_transaction_history(request, staff_id: int):
                 "claimed_points": int(sub.claimed_points or 0),
                 "proposed_points": int(sub.proposed_points or 0),
                 "bottle_data": sub.bottle_data or [],
-                "qr_url": qr_url,  # will be None if not pending
+                "qr_url": qr_url,
+                "qr_token": (sub.qr_token if sub.status == "pending" else None),
                 "display_points": int((sub.claimed_points if sub.status == "claimed" else sub.proposed_points) or 0),
             }
 
