@@ -4,6 +4,13 @@ from django.contrib.auth.models import Group
 
 from .models import DIYTutorial, DropOffSite, User, PointsConfig
 
+# Tailwind classes (kept DRY)
+_BASE_INPUT = "mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500"
+_FILE_INPUT = (
+    "mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500 "
+    "file:mr-3 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 hover:file:bg-gray-200"
+)
+_CHECKBOX = "h-5 w-5 rounded text-blue-600 focus:ring-blue-500"
 
 # -------------------------------
 # DIY Tutorials (create / update)
@@ -13,6 +20,7 @@ class DIYTutorialForm(forms.ModelForm):
     video_url = forms.URLField(required=False)
     duration_seconds = forms.IntegerField(min_value=0, required=False)
     thumbnail = forms.ImageField(required=False)
+
     class Meta:
         model = DIYTutorial
         fields = [
@@ -26,38 +34,52 @@ class DIYTutorialForm(forms.ModelForm):
         ]
         widgets = {
             "title": forms.TextInput(attrs={
-                "class": "w-full p-2 border rounded",
+                "class": _BASE_INPUT,
                 "id": "id_title",
+                "placeholder": "Short, clear title",
             }),
             "description": forms.Textarea(attrs={
-                "class": "w-full p-2 border rounded",
+                "class": _BASE_INPUT,
                 "rows": 4,
                 "id": "id_description",
+                "placeholder": "Steps, tips… (you can use -, *, • for bullets)",
             }),
             "video_url": forms.URLInput(attrs={
-                "class": "w-full p-2 border rounded",
+                "class": _BASE_INPUT,
                 "id": "id_video_url",
+                "placeholder": "https://youtu.be/...",
             }),
             "duration_seconds": forms.NumberInput(attrs={
-                "class": "w-full p-2 border rounded",
+                "class": _BASE_INPUT,
                 "min": 0,
                 "id": "id_duration_seconds",
             }),
             "thumbnail": forms.ClearableFileInput(attrs={
-                "class": "w-full p-2 border rounded",
+                "class": _FILE_INPUT,
                 "id": "id_thumbnail",
             }),
             "points_on_submit": forms.NumberInput(attrs={
-                "class": "w-full p-2 border rounded",
+                "class": _BASE_INPUT,
                 "min": 0,
                 "id": "id_points_on_submit",
             }),
             "is_active": forms.CheckboxInput(attrs={
-                "class": "h-4 w-4",
+                "class": _CHECKBOX,
                 "id": "id_is_active",
             }),
         }
-    
+
+    # Optional safety: re-apply classes if overridden elsewhere
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["title"].widget.attrs.setdefault("class", _BASE_INPUT)
+        self.fields["description"].widget.attrs.setdefault("class", _BASE_INPUT)
+        self.fields["video_url"].widget.attrs.setdefault("class", _BASE_INPUT)
+        self.fields["duration_seconds"].widget.attrs.setdefault("class", _BASE_INPUT)
+        self.fields["thumbnail"].widget.attrs.setdefault("class", _FILE_INPUT)
+        self.fields["points_on_submit"].widget.attrs.setdefault("class", _BASE_INPUT)
+        self.fields["is_active"].widget.attrs.setdefault("class", _CHECKBOX)
+
     def clean_title(self):
         return (self.cleaned_data.get("title") or "").strip()
 
@@ -88,10 +110,6 @@ class DIYTutorialForm(forms.ModelForm):
 # "Submission" admin page — bottle points assignment
 # -------------------------------------------------
 class PointsConfigForm(forms.ModelForm):
-    """
-    Admin control for assigning how many points a small or large bottle earns.
-    This edits the singleton-like PointsConfig (use PointsConfig.current() in the view).
-    """
     class Meta:
         model = PointsConfig
         fields = ["small_bottle_points", "large_bottle_points"]
@@ -101,19 +119,19 @@ class PointsConfigForm(forms.ModelForm):
         }
         widgets = {
             "small_bottle_points": forms.NumberInput(attrs={
-                "class": "w-full p-2 border rounded",
+                "class": _BASE_INPUT,
                 "min": 0,
                 "id": "id_small_bottle_points",
                 "step": 1,
             }),
             "large_bottle_points": forms.NumberInput(attrs={
-                "class": "w-full p-2 border rounded",
+                "class": _BASE_INPUT,
                 "min": 0,
                 "id": "id_large_bottle_points",
                 "step": 1,
             }),
         }
-    
+
     def clean_small_bottle_points(self):
         v = self.cleaned_data.get("small_bottle_points") or 0
         if v < 0:
@@ -136,11 +154,11 @@ class DropOffSiteForm(forms.ModelForm):
         fields = ["barangay", "staff_members"]
         widgets = {
             "barangay": forms.Select(attrs={
-                "class": "w-full p-2 border rounded",
+                "class": _BASE_INPUT,
                 "id": "id_barangay",
             }),
             "staff_members": forms.SelectMultiple(attrs={
-                "class": "w-full p-2 border rounded",
+                "class": _BASE_INPUT,
                 "id": "id_staff_members",
                 "size": 8,
             }),
@@ -170,5 +188,5 @@ class StaffApprovalForm(forms.ModelForm):
         model = User
         fields = ["is_approved"]
         widgets = {
-            "is_approved": forms.CheckboxInput(attrs={"class": "h-4 w-4"}),
+            "is_approved": forms.CheckboxInput(attrs={"class": _CHECKBOX}),
         }
