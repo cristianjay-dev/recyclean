@@ -140,24 +140,24 @@
       <div class="grid md:grid-cols-2 gap-4">
         <div>
           <label for="id_title" class="block text-sm font-medium">Title</label>
-          {{ form.title.as_widget(attrs={'class': 'mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500'}) }}
+          {{ form.title }}
         </div>
         <div>
           <label for="id_points_on_submit" class="block text-sm font-medium">Points on Submit</label>
-          {{ form.points_on_submit.as_widget(attrs={'class': 'mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500'}) }}
+          {{ form.points_on_submit }}
         </div>
       </div>
 
       <div>
         <label for="id_description" class="block text-sm font-medium">Instructions / Description</label>
-        {{ form.description.as_widget(attrs={'class': 'mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500'}) }}
+        {{ form.description }}
         <p class="text-xs text-gray-500 mt-1">Tip: Start lines with “-”, “*”, or “•” for bullet points.</p>
       </div>
 
       <div class="grid md:grid-cols-2 gap-4">
         <div>
           <label for="id_video_url" class="block text-sm font-medium">Video URL (YouTube)</label>
-          {{ form.video_url.as_widget(attrs={'class': 'mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500'}) }}
+          {{ form.video_url }}
           <button type="button" id="fetchYTMetaBtn"
                   class="mt-2 inline-flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300/60 transition">
             Auto-fill from YouTube
@@ -165,20 +165,20 @@
         </div>
         <div>
           <label for="id_duration_seconds" class="block text-sm font-medium">Duration (seconds)</label>
-          {{ form.duration_seconds.as_widget(attrs={'class': 'mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500'}) }}
+          {{ form.duration_seconds }}
         </div>
       </div>
 
       <div class="grid md:grid-cols-2 gap-4 items-start">
         <div>
           <label for="id_thumbnail" class="block text-sm font-medium">Thumbnail</label>
-          {{ form.thumbnail.as_widget(attrs={'class': 'mt-1 w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500 file:mr-3 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 hover:file:bg-gray-200'}) }}
+          {{ form.thumbnail }}
           <p class="text-xs text-gray-500 mt-1">Leave empty to keep current image when editing.</p>
           <img id="ytThumbPreview" alt="" class="mt-2 hidden w-40 h-24 object-cover rounded-lg ring-1 ring-black/5" />
         </div>
         <div class="flex items-center gap-2 pt-6">
           <label for="id_is_active" class="text-sm font-medium">Active in Pool</label>
-          {{ form.is_active.as_widget(attrs={'class': 'h-5 w-5 rounded text-blue-600 focus:ring-blue-500'}) }}
+          {{ form.is_active }}
         </div>
       </div>
 
