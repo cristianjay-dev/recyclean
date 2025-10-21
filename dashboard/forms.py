@@ -9,6 +9,7 @@ from .models import DIYTutorial, DropOffSite, User, PointsConfig
 # DIY Tutorials (create / update)
 # -------------------------------
 class DIYTutorialForm(forms.ModelForm):
+    title = forms.CharField(required=False)
     video_url = forms.URLField(required=False)
     duration_seconds = forms.IntegerField(min_value=0, required=False)
     thumbnail = forms.ImageField(required=False)

@@ -6,7 +6,7 @@ import io
 import json
 import logging
 import secrets
-
+import requests
 from django.contrib import messages
 import re
 from datetime import datetime, timedelta, date
@@ -126,10 +126,6 @@ def _is_real_staff(user) -> bool:
         and user.is_staff
         and user.groups.filter(name="staff").exists()
     )
-
-
-
-  # add this
 
 def require_staff_page(view_func):
     @wraps(view_func)
@@ -980,18 +976,48 @@ def _reseed_for_date(date_val, request=None, desired_count=None):
 
 def _youtube_meta_safe(url: str):
     """
-    Returns (title, duration_seconds, thumbnail_url) or (None, None, None).
+    Returns (title, duration_seconds, thumbnail_url, description) or (None, None, None, None).
+    1) Try pytube for title/length/thumb/description.
+    2) Fallback to YouTube oEmbed (title + thumbnail only).
     """
-    if not url or YouTube is None:
-        return None, None, None
+    if not url:
+        return None, None, None, None
+
+    # 1) pytube
+    if YouTube is not None:
+        try:
+            yt = YouTube(url)
+            title = yt.title or None
+            length = int(getattr(yt, "length", 0) or 0) or None
+            thumb  = yt.thumbnail_url or None
+            desc   = getattr(yt, "description", None) or None
+            if not thumb:
+                vid = _youtube_id(url or "")
+                if vid:
+                    thumb = f"https://img.youtube.com/vi/{vid}/hqdefault.jpg"
+            if title or length or thumb or desc:
+                return title, length, thumb, desc
+        except Exception:
+            pass  # fall through
+
+    # 2) oEmbed (no API key): title + thumbnail
     try:
-        yt = YouTube(url)
-        title = yt.title or None
-        length = int(getattr(yt, "length", 0) or 0) or None
-        thumb  = yt.thumbnail_url or None
-        return title, length, thumb
+        r = requests.get(
+            "https://www.youtube.com/oembed",
+            params={"url": url, "format": "json"},
+            timeout=6
+        )
+        if r.ok:
+            data = r.json()
+            title = data.get("title") or None
+            thumb = data.get("thumbnail_url") or _youtube_thumb(url)
+            return title, None, thumb, None
     except Exception:
-        return None, None, None
+        pass
+
+    # Last ditch: derive thumbnail from ID
+    return None, None, _youtube_thumb(url), None
+
 
 
 def _youtube_id(url: str) -> str | None:
@@ -1024,19 +1050,25 @@ def _youtube_thumb(url: str) -> str | None:
 def youtube_meta(request):
     """
     GET /api/utils/youtube-meta/?url=...
-    -> {success, title, duration_seconds, thumbnail}
+    -> {success, title, duration_seconds, thumbnail, description}
     """
     url = (request.GET.get("url") or "").strip()
     if not url:
         return Response({"success": False, "error": "Missing url."}, status=400)
-    if YouTube is None:
-        return Response({"success": False, "error": "pytube not installed on server."}, status=500)
 
-    title, dur, thumb = _youtube_meta_safe(url)
-    if not (title or dur):
+    # Do NOT require pytube; _youtube_meta_safe already falls back to oEmbed.
+    title, dur, thumb, desc = _youtube_meta_safe(url)
+
+    if not (title or dur or thumb):
         return Response({"success": False, "error": "Could not fetch metadata."}, status=400)
-    return Response({"success": True, "title": title, "duration_seconds": dur, "thumbnail": thumb})
 
+    return Response({
+        "success": True,
+        "title": title,
+        "duration_seconds": dur,
+        "thumbnail": thumb,
+        "description": desc,
+    })
 
 
 # Back-compat alias
@@ -1083,39 +1115,41 @@ def diy_create_tutorial(request):
         t = form.save(commit=False)
 
         # Auto-fill from YouTube if fields are blank
-        if t.video_url and (not (t.title or "").strip() or not t.duration_seconds):
-            meta_title, meta_len, _thumb = _youtube_meta_safe(t.video_url)
+        if t.video_url and (not (t.title or "").strip() or not t.duration_seconds or not (t.description or "").strip()):
+            meta_title, meta_len, _thumb, meta_desc = _youtube_meta_safe(t.video_url)
             if (not (t.title or "").strip()) and meta_title:
                 t.title = meta_title
             if (not t.duration_seconds) and meta_len:
                 t.duration_seconds = meta_len
-
+            if (not (t.description or "").strip()) and meta_desc:
+                # Optional: trim super long descriptions
+                t.description = meta_desc[:4000]
         t.save()
         return JsonResponse({"success": True, "id": t.id})
     return JsonResponse({"success": False, "errors": form.errors}, status=400)
-
 
 
 @require_POST
 @require_admin_json
 def diy_update_tutorial(request, tutorial_id: int):
     t = get_object_or_404(DIYTutorial, pk=tutorial_id)
+    old_url = t.video_url or ""
     form = DIYTutorialForm(request.POST, request.FILES, instance=t)
     if form.is_valid():
         t = form.save(commit=False)
+        url_changed = (old_url.strip() != (t.video_url or "").strip())
 
-        # Auto-fill from YouTube if fields are blank
-        if t.video_url and (not (t.title or "").strip() or not t.duration_seconds):
-            meta_title, meta_len, _thumb = _youtube_meta_safe(t.video_url)
+        if t.video_url and (url_changed or not (t.title or "").strip() or not t.duration_seconds or not (t.description or "").strip()):
+            meta_title, meta_len, _thumb, meta_desc = _youtube_meta_safe(t.video_url)
             if (not (t.title or "").strip()) and meta_title:
                 t.title = meta_title
             if (not t.duration_seconds) and meta_len:
                 t.duration_seconds = meta_len
-
+            if (not (t.description or "").strip()) and meta_desc:
+                t.description = meta_desc[:4000]
         t.save()
         return JsonResponse({"success": True})
     return JsonResponse({"success": False, "errors": form.errors}, status=400)
-
 
 
 @require_POST
