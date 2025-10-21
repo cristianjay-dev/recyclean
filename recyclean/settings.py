@@ -186,11 +186,11 @@ DIY_ADMIN_BYPASS = os.getenv("DIY_ADMIN_BYPASS", "false").lower() == "true"
 # CSRF_COOKIE_SECURE = True
 # SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
-
-# DIY daily selection behavior (optionally configure via .env)
-DIY_DAILY_STRATEGY = os.getenv("DIY_DAILY_STRATEGY", "round_robin")
-DIY_NO_REPEAT_DAYS = int(os.getenv("DIY_NO_REPEAT_DAYS", "5"))
-DIY_ROTATION_SALT   = int(os.getenv("DIY_ROTATION_SALT", "0"))
-
-# NEW: how many tutorials to show per day
-DIY_DAILY_COUNT = int(os.getenv("DIY_DAILY_COUNT", "3"))
+# -----------------------------------------------------------------------------
+# DIY rotation (weekly 3 videos)
+# -----------------------------------------------------------------------------
+DIY_PERIOD = os.getenv("DIY_PERIOD", "week")         # "day" or "week"
+DIY_DAILY_COUNT = int(os.getenv("DIY_DAILY_COUNT", "3"))   # count per period (3 per week)
+DIY_NO_REPEAT_WEEKS = int(os.getenv("DIY_NO_REPEAT_WEEKS", "4"))
+DIY_WEEK_START = int(os.getenv("DIY_WEEK_START", "0"))     # 0=Mon … 6=Sun
+DIY_ROTATION_SALT = int(os.getenv("DIY_ROTATION_SALT", "0"))

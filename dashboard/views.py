@@ -770,28 +770,36 @@ def _abs_or_none(request, f):
 @permission_classes([permissions.AllowAny])
 @authentication_classes([TokenAuthentication, SessionAuthentication, BasicAuthentication])
 def api_diy_daily(request):
-    date_val = today_ph()
-    desired_count = int(request.GET.get("count") or DAILY_COUNT_DEFAULT)
+    """
+    Weekly mode:
+      - Uses the week's anchor date (DIY_WEEK_START) as the storage key in DIYDailySelection/Pool.date
+      - Picks DIY_DAILY_COUNT tutorials per WEEK (default 3)
+      - Enforces DIY_NO_REPEAT_WEEKS across anchors
+    Daily mode (back-compat):
+      - Behaves as before (count per day; DIY_NO_REPEAT_DAYS)
+    """
+    today = today_ph()
+    anchor = _period_anchor(today)
 
-    # NEW: allow ?refresh=1 (or true/yes) to re-pick for today
+    desired_count = int(request.GET.get("count") or getattr(settings, "DIY_DAILY_COUNT", 3))
     refresh = str(request.GET.get("refresh", "0")).lower() in {"1", "true", "yes"}
 
-    # If refreshing, clear today's selections so we can repopulate
+    # If refreshing, clear current period's selections (by anchor)
     if refresh:
-        DIYDailySelection.objects.filter(date=date_val).delete()
+        DIYDailySelection.objects.filter(date=anchor).delete()
 
     existing = (
         DIYDailySelection.objects
-        .filter(date=date_val)
+        .filter(date=anchor)
         .select_related("tutorial")
         .order_by("id")
     )
 
-    # Only return early if we already have enough and we're NOT refreshing
     if not refresh and existing.count() >= desired_count:
         tutorials = [e.tutorial for e in existing[:desired_count]]
         return Response({
-            "date": str(date_val),
+            # NOTE: return the *anchor* date so clients can label "This week"
+            "date": str(anchor),
             "tutorials": [
                 {
                     "id": t.id,
@@ -810,20 +818,21 @@ def api_diy_daily(request):
             ],
         })
 
-    # Build/refresh the pool for today
-    pool, _ = DIYDailyPool.objects.get_or_create(date=date_val)
+    # Build/sync the pool for this anchor
+    pool, _ = DIYDailyPool.objects.get_or_create(date=anchor)
 
-    # NEW: keep today's pool in sync with ALL active tutorials
+    # keep pool in sync with all active tutorials
     active_ids = set(DIYTutorial.objects.filter(is_active=True).values_list("id", flat=True))
     pool_ids = set(pool.tutorials.values_list("id", flat=True))
-    missing_ids = active_ids - pool_ids
-    if missing_ids:
-        pool.tutorials.add(*missing_ids)
+    to_add = active_ids - pool_ids
+    if to_add:
+        pool.tutorials.add(*to_add)
+    to_remove = pool_ids - active_ids
+    if to_remove:
+        pool.tutorials.remove(*to_remove)
 
-    # ---- the rest of your function stays the same from here ----
-    # Recent-repeat window
-    no_repeat_days = int(getattr(settings, "DIY_NO_REPEAT_DAYS", 5))
-    window_start = date_val - timedelta(days=max(no_repeat_days - 1, 0))
+    # No-repeat window across recent periods
+    window_start = _recent_window_start(anchor)
     recent_ids = set(
         DIYDailySelection.objects
         .filter(date__gte=window_start)
@@ -833,52 +842,49 @@ def api_diy_daily(request):
 
     base_qs = pool.tutorials.filter(is_active=True)
     candidates_excl = list(base_qs.exclude(id__in=recent_ids).order_by("id").values_list("id", flat=True))
-    candidates_all = list(base_qs.order_by("id").values_list("id", flat=True))
+    candidates_all  = list(base_qs.order_by("id").values_list("id", flat=True))
 
-    if candidates_excl:
-        ids = candidates_excl
-    else:
-        ids = candidates_all
-
+    ids = candidates_excl if candidates_excl else candidates_all
     if not ids:
         return Response(status=204)
 
+    # Round-robin start = function of the *anchor* (weekly) + salt
     salt = int(getattr(settings, "DIY_ROTATION_SALT", 0))
-    start_idx = (date_val.toordinal() + salt) % len(ids)
+    start_idx = (anchor.toordinal() + salt) % len(ids)
 
-    picked_ids_today = set(existing.values_list("tutorial_id", flat=True))
-    todays_ids = []
+    picked_ids_now = set(existing.values_list("tutorial_id", flat=True))
+    picked = []
     i = 0
-    while len(todays_ids) < desired_count and i < len(ids) * 2:
+    while len(picked) < desired_count and i < len(ids) * 2:
         tid = ids[(start_idx + i) % len(ids)]
-        if tid not in todays_ids and tid not in picked_ids_today:
-            todays_ids.append(tid)
+        if tid not in picked and tid not in picked_ids_now:
+            picked.append(tid)
         i += 1
 
-    if len(todays_ids) < desired_count:
+    if len(picked) < desired_count:
         for tid in candidates_all:
-            if len(todays_ids) >= desired_count:
+            if len(picked) >= desired_count:
                 break
-            if tid not in todays_ids and tid not in picked_ids_today:
-                todays_ids.append(tid)
+            if tid not in picked and tid not in picked_ids_now:
+                picked.append(tid)
 
-    for tid in todays_ids:
+    for tid in picked:
         DIYDailySelection.objects.get_or_create(
-            date=date_val,
+            date=anchor,
             tutorial_id=tid,
             defaults={"pool": pool},
         )
 
     final = (
         DIYDailySelection.objects
-        .filter(date=date_val)
+        .filter(date=anchor)
         .select_related("tutorial")
         .order_by("id")
     )[:desired_count]
 
     tutorials = [e.tutorial for e in final]
     return Response({
-        "date": str(date_val),
+        "date": str(anchor),
         "tutorials": [
             {
                 "id": t.id,
@@ -897,18 +903,45 @@ def api_diy_daily(request):
         ],
     })
 
-
 # --- helpers near your other utils ---
+
+# --- DIY weekly helpers ---
+def _week_anchor(d: date) -> date:
+    """Return the start-of-week date using DIY_WEEK_START (0=Mon..6=Sun)."""
+    wk_start = int(getattr(settings, "DIY_WEEK_START", 0))
+    offset = (d.weekday() - wk_start) % 7
+    return d - timedelta(days=offset)
+
+def _period_anchor(d: date) -> date:
+    """Return anchor date based on DIY_PERIOD (day|week)."""
+    period = (getattr(settings, "DIY_PERIOD", "day") or "day").lower()
+    return _week_anchor(d) if period == "week" else d
+
+def _recent_window_start(anchor: date) -> date:
+    """
+    Return start date for the no-repeat window depending on DIY_PERIOD.
+    For weekly: use DIY_NO_REPEAT_WEEKS (count of weeks, inclusive).
+    For daily : use DIY_NO_REPEAT_DAYS  (count of days, inclusive).
+    """
+    period = (getattr(settings, "DIY_PERIOD", "day") or "day").lower()
+    if period == "week":
+        n_weeks = max(int(getattr(settings, "DIY_NO_REPEAT_WEEKS", 4)), 1)
+        # include current anchor → look back (n_weeks-1) full weeks
+        return anchor - timedelta(weeks=n_weeks - 1)
+    else:
+        n_days = max(int(getattr(settings, "DIY_NO_REPEAT_DAYS", 5)), 1)
+        return anchor - timedelta(days=n_days - 1)
 
 # Re-seed a specific date after a featured tutorial was removed/deleted.
 def _reseed_for_date(date_val, request=None, desired_count=None):
     if desired_count is None:
         desired_count = int(getattr(settings, "DIY_DAILY_COUNT", 3))
 
-    # Ensure a pool exists for that day
-    pool, _ = DIYDailyPool.objects.get_or_create(date=date_val)
+    anchor = _period_anchor(date_val)
 
-    # Keep the pool in sync with *current* active tutorials:
+    pool, _ = DIYDailyPool.objects.get_or_create(date=anchor)
+
+    # sync pool with current active tutorials
     active_ids = set(DIYTutorial.objects.filter(is_active=True).values_list("id", flat=True))
     pool_ids = set(pool.tutorials.values_list("id", flat=True))
     to_add = active_ids - pool_ids
@@ -918,19 +951,16 @@ def _reseed_for_date(date_val, request=None, desired_count=None):
     if to_remove:
         pool.tutorials.remove(*to_remove)
 
-    # Already-selected (after we may have deleted some)
     existing = (
         DIYDailySelection.objects
-        .filter(date=date_val)
+        .filter(date=anchor)
         .select_related("tutorial")
         .order_by("id")
     )
     if existing.count() >= desired_count:
-        return  # nothing to do
+        return
 
-    # Recent-repeat window relative to that date
-    no_repeat_days = int(getattr(settings, "DIY_NO_REPEAT_DAYS", 5))
-    window_start = date_val - timedelta(days=max(no_repeat_days - 1, 0))
+    window_start = _recent_window_start(anchor)
     recent_ids = set(
         DIYDailySelection.objects
         .filter(date__gte=window_start)
@@ -939,40 +969,38 @@ def _reseed_for_date(date_val, request=None, desired_count=None):
     )
 
     base_qs = pool.tutorials.filter(is_active=True)
-    candidates_excl = list(
-        base_qs.exclude(id__in=recent_ids).order_by("id").values_list("id", flat=True)
-    )
-    candidates_all = list(base_qs.order_by("id").values_list("id", flat=True))
-
+    candidates_excl = list(base_qs.exclude(id__in=recent_ids).order_by("id").values_list("id", flat=True))
+    candidates_all  = list(base_qs.order_by("id").values_list("id", flat=True))
     ids = candidates_excl if candidates_excl else candidates_all
     if not ids:
-        return  # nothing available to seed
+        return
 
     salt = int(getattr(settings, "DIY_ROTATION_SALT", 0))
-    start_idx = (date_val.toordinal() + salt) % len(ids)
+    start_idx = (anchor.toordinal() + salt) % len(ids)
 
-    picked_ids_today = set(existing.values_list("tutorial_id", flat=True))
-    todays_ids = []
+    picked_ids_now = set(existing.values_list("tutorial_id", flat=True))
+    picked = []
     i = 0
-    while len(todays_ids) < desired_count and i < len(ids) * 2:
+    while len(picked) < desired_count and i < len(ids) * 2:
         tid = ids[(start_idx + i) % len(ids)]
-        if tid not in todays_ids and tid not in picked_ids_today:
-            todays_ids.append(tid)
+        if tid not in picked and tid not in picked_ids_now:
+            picked.append(tid)
         i += 1
 
-    if len(todays_ids) < desired_count:
+    if len(picked) < desired_count:
         for tid in candidates_all:
-            if len(todays_ids) >= desired_count:
+            if len(picked) >= desired_count:
                 break
-            if tid not in todays_ids and tid not in picked_ids_today:
-                todays_ids.append(tid)
+            if tid not in picked and tid not in picked_ids_now:
+                picked.append(tid)
 
-    for tid in todays_ids:
+    for tid in picked:
         DIYDailySelection.objects.get_or_create(
-            date=date_val,
+            date=anchor,
             tutorial_id=tid,
             defaults={"pool": pool},
         )
+
 
 def _youtube_meta_safe(url: str):
     """
@@ -1092,12 +1120,15 @@ def diy_feature_today(request):
         except ValueError:
             return JsonResponse({"success": False, "error": "Invalid date format, use YYYY-MM-DD."}, status=400)
 
+        # NEW: snap to period anchor (weekly → week start)
+        anchor = _period_anchor(picked_date)
+
         tutorial = get_object_or_404(DIYTutorial, pk=tutorial_id)
-        pool, _ = DIYDailyPool.objects.get_or_create(date=picked_date)
+        pool, _ = DIYDailyPool.objects.get_or_create(date=anchor)
         pool.tutorials.add(tutorial)
 
         DIYDailySelection.objects.get_or_create(
-            date=picked_date,
+            date=anchor,
             tutorial=tutorial,
             defaults={"pool": pool},
         )
@@ -1105,6 +1136,7 @@ def diy_feature_today(request):
     except Exception as e:
         LOGGER.exception("Feature DIY error")
         return JsonResponse({"success": False, "error": str(e)}, status=500)
+
 
 
 @require_POST
