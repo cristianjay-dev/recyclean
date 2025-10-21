@@ -10,8 +10,8 @@
       <div>
         <h1 class="text-2xl font-bold">DIY Tutorials Management</h1>
         <p class="text-gray-600">
-          Add tutorials (your manual pool), mark them <span class="font-semibold">Active</span> to include in rotation,
-          and feature one tutorial per day.
+          Add tutorials to your manual pool, toggle <span class="font-semibold">Active</span> to include in the round-robin,
+          and the app will show <span class="font-semibold">3 tutorials per day</span> (no manual feature needed).
         </p>
       </div>
 
@@ -24,50 +24,24 @@
       </div>
     </div>
 
-    <!-- Today’s Featured Tutorial -->
+    <!-- Today’s DIY (round-robin N/day) -->
     <div class="bg-white p-6 rounded-lg shadow-lg">
       <div class="flex items-center justify-between mb-4">
-        <h2 class="text-xl font-semibold">Today’s Featured DIY</h2>
-        <button id="refreshTodayBtn" class="text-sm px-3 py-1 rounded bg-gray-100 hover:bg-gray-200"
-                title="Reload from /api/diy/daily/">Refresh</button>
+        <h2 class="text-xl font-semibold">Today’s DIY Rotation</h2>
+        <div class="flex gap-2">
+          <button id="refreshTodayBtn" class="text-sm px-3 py-1 rounded bg-gray-100 hover:bg-gray-200"
+                  title="Re-pick today’s set using /api/diy/daily?refresh=1">Re-pick</button>
+          <button id="reloadTodayBtn" class="text-sm px-3 py-1 rounded bg-gray-100 hover:bg-gray-200"
+                  title="Reload from /api/diy/daily">Reload</button>
+        </div>
       </div>
 
       <div id="todayBox" class="border rounded p-4 bg-gray-50">
         <p class="text-gray-500">Loading today’s DIY…</p>
       </div>
-
-      <!-- Feature any tutorial FOR A DATE (override auto-pick) -->
-      <div class="mt-6 border-t pt-4">
-        <h3 class="font-semibold mb-2">Feature a specific tutorial for a date</h3>
-        <form id="featureForm" class="grid md:grid-cols-3 gap-3 items-end">
-          {% csrf_token %}
-          <div>
-            <label class="block text-sm font-medium mb-1">Date</label>
-            <input type="date" id="featureDate" name="date"
-                   class="w-full p-2 border rounded" required>
-          </div>
-          <div>
-            <label class="block text-sm font-medium mb-1">Tutorial</label>
-            <select id="featureTutorial" name="tutorial_id" class="w-full p-2 border rounded" required>
-              <option value="">— Select tutorial —</option>
-              {% for t in tutorials %}
-                {% if t.is_active %}
-                  <option value="{{ t.id }}">{{ t.title }}</option>
-                {% endif %}
-              {% endfor %}
-            </select>
-          </div>
-          <div>
-            <button type="submit"
-                    class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 px-4 rounded">
-              Feature for date
-            </button>
-          </div>
-        </form>
-        <p class="text-xs text-gray-500 mt-2">
-          Tip: Pick today’s date to immediately override the daily choice for all users.
-        </p>
-      </div>
+      <p class="text-xs text-gray-500 mt-2">
+        Shown count follows <code>DIY_DAILY_COUNT</code> (default 3). Re-pick creates/refreshes today’s selection.
+      </p>
     </div>
 
     <!-- Pool (All Tutorials) -->
@@ -75,7 +49,7 @@
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-xl font-semibold">Tutorial Pool ({{ tutorials.count }} total)</h2>
         <span class="text-sm px-2 py-1 rounded bg-blue-50 text-blue-800">
-          Active in pool (toggle “Active” to include in rotation)
+          Active = included in round-robin
         </span>
       </div>
 
@@ -117,12 +91,6 @@
                     onclick="openEditModal({{ t.id }}, `{{ t.title|escapejs }}`, `{{ t.description|escapejs }}`, `{{ t.video_url|escapejs }}`, {{ t.duration_seconds|default:'null' }}, {{ t.points_on_submit|default:0 }}, {{ t.is_active|yesno:'true,false' }})"
                     class="bg-yellow-100 hover:bg-yellow-200 text-yellow-800 px-3 py-1 text-sm rounded">
                     Edit
-                  </button>
-
-                  <button
-                    onclick="featureThisToday({{ t.id }})"
-                    class="bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-3 py-1 text-sm rounded">
-                    Feature today
                   </button>
 
                   <button
@@ -175,6 +143,10 @@
         <div>
           <label for="id_video_url" class="block text-sm font-medium">Video URL (YouTube)</label>
           {{ form.video_url }}
+          <button type="button" id="fetchYTMetaBtn"
+                  class="mt-2 text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200">
+            Auto-fill from YouTube
+          </button>
         </div>
         <div>
           <label for="id_duration_seconds" class="block text-sm font-medium">Duration (seconds)</label>
@@ -187,6 +159,7 @@
           <label for="id_thumbnail" class="block text-sm font-medium">Thumbnail</label>
           {{ form.thumbnail }}
           <p class="text-xs text-gray-500 mt-1">Leave empty to keep current image when editing.</p>
+          <img id="ytThumbPreview" alt="" class="mt-2 hidden w-40 h-24 object-cover rounded border" />
         </div>
         <div class="flex items-center gap-2">
           <label for="id_is_active" class="text-sm font-medium">Active in Pool</label>
@@ -216,101 +189,70 @@ function handleAuthErrors(res) {
 }
 
 const todayBox = document.getElementById('todayBox');
+const reloadBtn = document.getElementById('reloadTodayBtn');
 const refreshBtn = document.getElementById('refreshTodayBtn');
 
-function renderToday(data) {
-  if (!data || !data.tutorial) {
-    todayBox.innerHTML = '<p class="text-gray-500">No featured tutorial for today.</p>';
+function cardFor(t) {
+  return `
+  <div class="flex gap-4 border rounded p-3 bg-white shadow-sm">
+    ${t.thumbnail ? `<img src="${t.thumbnail}" class="w-28 h-28 object-cover rounded" alt="">` :
+      `<div class="w-28 h-28 flex items-center justify-center rounded bg-gray-200 text-gray-500 text-xs">No image</div>`}
+    <div class="flex-1">
+      <p class="font-semibold">${t.title || ''}</p>
+      ${t.video_url ? `<a href="${t.video_url}" target="_blank" class="text-sm text-blue-600 hover:underline">${t.video_url}</a>`: ''}
+      ${t.points_on_submit !== undefined ? `<p class="text-sm text-gray-700 mt-1">Points on submit: <span class="font-semibold">${t.points_on_submit}</span></p>`:''}
+      ${t.description_html ? `<div class="mt-2 text-sm text-gray-700">${t.description_html}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderTodayList(data) {
+  if (!data || !Array.isArray(data.tutorials) || data.tutorials.length === 0) {
+    todayBox.innerHTML = '<p class="text-gray-500">No tutorials available for today.</p>';
     return;
   }
-  const t = data.tutorial;
+  const items = data.tutorials.map(cardFor).join('<div class="h-3"></div>');
   todayBox.innerHTML = `
-    <div class="flex gap-4">
-      ${t.thumbnail ? `<img src="${t.thumbnail}" class="w-28 h-28 object-cover rounded" alt="">` : `
-        <div class="w-28 h-28 flex items-center justify-center rounded bg-gray-200 text-gray-500 text-xs">No image</div>`}
-      <div class="flex-1">
-        <p class="font-semibold">${t.title}</p>
-        ${t.video_url ? `<a href="${t.video_url}" target="_blank" class="text-sm text-blue-600 hover:underline">${t.video_url}</a>`: ''}
-        ${t.points_on_submit !== undefined ? `<p class="text-sm text-gray-700 mt-1">Points on submit: <span class="font-semibold">${t.points_on_submit}</span></p>`:''}
-        ${t.description_html ? `<div class="mt-2 text-sm text-gray-700">${t.description_html}</div>` : ''}
-        <p class="text-xs text-gray-500 mt-1">Date: ${data.date}</p>
-      </div>
-    </div>
-  `;
+    <div class="space-y-3">
+      ${items}
+      <p class="text-xs text-gray-500">Date: ${data.date}</p>
+    </div>`;
 }
 
 async function loadToday(opts = {}) {
   try {
     const base = "{% url 'api_diy_daily' %}";
     const params = new URLSearchParams();
-    params.set("count", "1");           // only need one
+    // Ask server for N items; if your server default is 3, you can omit this:
+    params.set("count", "3");
     if (opts.refresh) params.set("refresh", "1");
     const res = await fetch(`${base}?${params.toString()}`);
-    if (res.status === 204) { renderToday(null); return; }
+    if (res.status === 204) { renderTodayList({ tutorials: [] }); return; }
     if (handleAuthErrors(res)) { todayBox.innerHTML = '<p class="text-red-600">Not authorized.</p>'; return; }
     const data = await res.json();
-    const t = (data && Array.isArray(data.tutorials)) ? data.tutorials[0] : null;
-    renderToday({ date: data?.date, tutorial: t });
+    renderTodayList(data);
   } catch (e) {
     todayBox.innerHTML = '<p class="text-red-600">Failed to load today’s DIY.</p>';
   }
 }
 
+reloadBtn.addEventListener('click', () => loadToday({ refresh: false }));
 refreshBtn.addEventListener('click', () => loadToday({ refresh: true }));
-document.addEventListener('DOMContentLoaded', () => {
-  const d = document.getElementById('featureDate');
-  if (d) d.value = new Date().toISOString().slice(0,10);
-  loadToday();
-});
+document.addEventListener('DOMContentLoaded', loadToday);
 
-const featureForm = document.getElementById('featureForm');
-featureForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const fd = new FormData(featureForm);
-  const res = await fetch("{% url 'diy_feature_today' %}", {
-    method: "POST",
-    headers: { "X-CSRFToken": getCSRFToken() },
-    body: fd
-  });
-  if (handleAuthErrors(res)) return;
-  const data = await res.json();
-  if (data.success) { alert('✅ Featured successfully.'); loadToday(); }
-  else { alert('❌ Failed to feature: ' + (data.error || 'Unknown error')); }
-});
-
-async function featureThisToday(id) {
-  const date = new Date().toISOString().slice(0,10);
-  const fd = new FormData();
-  fd.append("tutorial_id", id);
-  fd.append("date", date);
-  const res = await fetch("{% url 'diy_feature_today' %}", {
-    method: "POST",
-    headers: { "X-CSRFToken": getCSRFToken() },
-    body: fd
-  });
-  if (handleAuthErrors(res)) return;
-  const data = await res.json();
-  if (data.success) {
-    alert('✅ Featured for today.');
-    loadToday();
-    const sel = document.getElementById('featureTutorial');
-    if (sel) sel.value = String(id);
-    const dateInput = document.getElementById('featureDate');
-    if (dateInput) dateInput.value = date;
-  } else {
-    alert('❌ Failed to feature: ' + (data.error || 'Unknown error'));
-  }
-}
-
+// ---------- CRUD Modal ----------
 const modal = document.getElementById('diyModal');
 const modalTitle = document.getElementById('modalTitle');
 const diyForm = document.getElementById('diyForm');
 const tutorialIdInput = document.getElementById('tutorial_id');
+const ytThumbPreview = document.getElementById('ytThumbPreview');
 
 function openAddModal() {
   modalTitle.textContent = 'Add Tutorial';
   diyForm.reset();
   tutorialIdInput.value = '';
+  ytThumbPreview.src = '';
+  ytThumbPreview.classList.add('hidden');
   modal.classList.remove('hidden');
 }
 
@@ -322,16 +264,20 @@ function openEditModal(id, title, description, video_url, duration_seconds, poin
   document.getElementById('id_title').value = title || '';
   document.getElementById('id_description').value = description || '';
   document.getElementById('id_video_url').value = video_url || '';
-  document.getElementById('id_duration_seconds').value = duration_seconds != null ? duration_seconds : '';
-  document.getElementById('id_points_on_submit').value = points_on_submit != null ? points_on_submit : 0;
+  document.getElementById('id_duration_seconds').value = (duration_seconds != null ? duration_seconds : '');
+  document.getElementById('id_points_on_submit').value = (points_on_submit != null ? points_on_submit : 0);
   const activeInput = document.getElementById('id_is_active');
   if (activeInput) activeInput.checked = !!is_active;
+
+  // show derived youtube thumb if present
+  maybeShowThumbFromUrl(video_url);
 
   modal.classList.remove('hidden');
 }
 
 function closeModal() { modal.classList.add('hidden'); }
 
+// Save (create/update)
 diyForm.addEventListener('submit', async function(e) {
   e.preventDefault();
   const isEditing = !!tutorialIdInput.value;
@@ -375,6 +321,67 @@ async function deleteTutorial(id) {
   if (data.success) location.reload();
   else alert('❌ Delete failed: ' + (data.error || 'Unknown error'));
 }
+
+// ---------- Optional: YouTube auto-fill in the modal ----------
+const videoUrlInput = document.getElementById('id_video_url');
+const fetchYTMetaBtn = document.getElementById('fetchYTMetaBtn');
+
+function maybeShowThumbFromUrl(url) {
+  if (!url) { ytThumbPreview.src = ''; ytThumbPreview.classList.add('hidden'); return; }
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./,'');
+    let vid = null;
+    if (host === 'youtu.be') {
+      vid = u.pathname.replace('/','');
+    } else if (host.includes('youtube.com')) {
+      if (u.pathname === '/watch') vid = u.searchParams.get('v');
+      const parts = u.pathname.split('/').filter(Boolean);
+      if (!vid && (parts[0] === 'embed' || parts[0] === 'shorts' || parts[0] === 'v') && parts[1]) vid = parts[1];
+    }
+    if (vid) {
+      ytThumbPreview.src = `https://img.youtube.com/vi/${vid}/hqdefault.jpg`;
+      ytThumbPreview.classList.remove('hidden');
+    } else {
+      ytThumbPreview.src = '';
+      ytThumbPreview.classList.add('hidden');
+    }
+  } catch (e) {
+    ytThumbPreview.src = '';
+    ytThumbPreview.classList.add('hidden');
+  }
+}
+
+async function fetchYouTubeMeta() {
+  const url = (videoUrlInput.value || '').trim();
+  if (!url) { alert('Enter a YouTube URL first.'); return; }
+  try {
+    const res = await fetch(`/api/utils/youtube-meta/?url=${encodeURIComponent(url)}`);
+    if (!res.ok) throw new Error('Meta endpoint unavailable');
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Could not fetch metadata');
+
+    // Only fill blanks so we don’t overwrite the admin’s edits
+    const titleEl = document.getElementById('id_title');
+    const durEl = document.getElementById('id_duration_seconds');
+    if (!titleEl.value.trim() && data.title) titleEl.value = data.title;
+    if (!durEl.value && data.duration_seconds) durEl.value = data.duration_seconds;
+
+    // Show thumb preview if provided/derivable
+    if (data.thumbnail) {
+      ytThumbPreview.src = data.thumbnail;
+      ytThumbPreview.classList.remove('hidden');
+    } else {
+      maybeShowThumbFromUrl(url);
+    }
+  } catch (e) {
+    // Silent fallback; server-side will still try to fill on save
+    maybeShowThumbFromUrl(url);
+  }
+}
+
+videoUrlInput?.addEventListener('blur', fetchYouTubeMeta);
+fetchYTMetaBtn?.addEventListener('click', fetchYouTubeMeta);
 </script>
 
 {% endblock %}
