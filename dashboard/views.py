@@ -73,12 +73,18 @@ from .services.reloadly import (
 from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
 signer = TimestampSigner(salt="submission-qr")
 
+# YouTube metadata (optional dependency)
+try:
+    from pytube import YouTube  # type: ignore[import-not-found]
+except ImportError:
+    YouTube = None  # type: ignore[assignment]
+
+
+
 
 LOGGER = logging.getLogger(__name__)
 COUNTRY = getattr(settings, "RELOADLY_COUNTRY_CODE", "PH")
 TWO_DP = Decimal("0.01")
-
-
 
 # ==============================================================================
 # Utilities
@@ -972,6 +978,22 @@ def _reseed_for_date(date_val, request=None, desired_count=None):
             defaults={"pool": pool},
         )
 
+def _youtube_meta_safe(url: str):
+    """
+    Returns (title, duration_seconds, thumbnail_url) or (None, None, None).
+    """
+    if not url or YouTube is None:
+        return None, None, None
+    try:
+        yt = YouTube(url)
+        title = yt.title or None
+        length = int(getattr(yt, "length", 0) or 0) or None
+        thumb  = yt.thumbnail_url or None
+        return title, length, thumb
+    except Exception:
+        return None, None, None
+
+
 def _youtube_id(url: str) -> str | None:
     try:
         p = urlparse(url)
@@ -995,6 +1017,26 @@ def _youtube_thumb(url: str) -> str | None:
         return None
     # 'maxresdefault.jpg' sometimes 404s; 'hqdefault.jpg' is reliable
     return f"https://img.youtube.com/vi/{vid}/hqdefault.jpg"
+
+
+@api_view(["GET"])
+@permission_classes([IsAdminOrStaff])  # admin/staff; adjust if you want
+def youtube_meta(request):
+    """
+    GET /api/utils/youtube-meta/?url=...
+    -> {success, title, duration_seconds, thumbnail}
+    """
+    url = (request.GET.get("url") or "").strip()
+    if not url:
+        return Response({"success": False, "error": "Missing url."}, status=400)
+    if YouTube is None:
+        return Response({"success": False, "error": "pytube not installed on server."}, status=500)
+
+    title, dur, thumb = _youtube_meta_safe(url)
+    if not (title or dur):
+        return Response({"success": False, "error": "Could not fetch metadata."}, status=400)
+    return Response({"success": True, "title": title, "duration_seconds": dur, "thumbnail": thumb})
+
 
 
 # Back-compat alias
@@ -1038,9 +1080,20 @@ def diy_feature_today(request):
 def diy_create_tutorial(request):
     form = DIYTutorialForm(request.POST, request.FILES)
     if form.is_valid():
-        t = form.save()
+        t = form.save(commit=False)
+
+        # Auto-fill from YouTube if fields are blank
+        if t.video_url and (not (t.title or "").strip() or not t.duration_seconds):
+            meta_title, meta_len, _thumb = _youtube_meta_safe(t.video_url)
+            if (not (t.title or "").strip()) and meta_title:
+                t.title = meta_title
+            if (not t.duration_seconds) and meta_len:
+                t.duration_seconds = meta_len
+
+        t.save()
         return JsonResponse({"success": True, "id": t.id})
     return JsonResponse({"success": False, "errors": form.errors}, status=400)
+
 
 
 @require_POST
@@ -1049,9 +1102,20 @@ def diy_update_tutorial(request, tutorial_id: int):
     t = get_object_or_404(DIYTutorial, pk=tutorial_id)
     form = DIYTutorialForm(request.POST, request.FILES, instance=t)
     if form.is_valid():
-        form.save()
+        t = form.save(commit=False)
+
+        # Auto-fill from YouTube if fields are blank
+        if t.video_url and (not (t.title or "").strip() or not t.duration_seconds):
+            meta_title, meta_len, _thumb = _youtube_meta_safe(t.video_url)
+            if (not (t.title or "").strip()) and meta_title:
+                t.title = meta_title
+            if (not t.duration_seconds) and meta_len:
+                t.duration_seconds = meta_len
+
+        t.save()
         return JsonResponse({"success": True})
     return JsonResponse({"success": False, "errors": form.errors}, status=400)
+
 
 
 @require_POST

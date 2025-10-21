@@ -9,6 +9,9 @@ from .models import DIYTutorial, DropOffSite, User, PointsConfig
 # DIY Tutorials (create / update)
 # -------------------------------
 class DIYTutorialForm(forms.ModelForm):
+    video_url = forms.URLField(required=False)
+    duration_seconds = forms.IntegerField(min_value=0, required=False)
+    thumbnail = forms.ImageField(required=False)
     class Meta:
         model = DIYTutorial
         fields = [
@@ -53,16 +56,29 @@ class DIYTutorialForm(forms.ModelForm):
                 "id": "id_is_active",
             }),
         }
+    
+    def clean_title(self):
+        return (self.cleaned_data.get("title") or "").strip()
+
+    def clean_description(self):
+        return (self.cleaned_data.get("description") or "").strip()
+
+    def clean_video_url(self):
+        url = (self.cleaned_data.get("video_url") or "").strip()
+        return url or None
 
     def clean_points_on_submit(self):
-        pts = self.cleaned_data.get("points_on_submit") or 0
+        pts = int(self.cleaned_data.get("points_on_submit") or 0)
         if pts < 0:
             raise forms.ValidationError("Points must be ≥ 0.")
         return pts
 
     def clean_duration_seconds(self):
         dur = self.cleaned_data.get("duration_seconds")
-        if dur is not None and dur < 0:
+        if dur is None:
+            return None
+        dur = int(dur)
+        if dur < 0:
             raise forms.ValidationError("Duration must be ≥ 0.")
         return dur
 
@@ -96,7 +112,7 @@ class PointsConfigForm(forms.ModelForm):
                 "step": 1,
             }),
         }
-
+    
     def clean_small_bottle_points(self):
         v = self.cleaned_data.get("small_bottle_points") or 0
         if v < 0:

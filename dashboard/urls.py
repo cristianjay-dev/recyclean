@@ -144,7 +144,8 @@ urlpatterns = [
     path("api/diy/<int:tutorial_id>/update/", views.diy_update_tutorial, name="diy_update_tutorial"),
     path("api/diy/<int:tutorial_id>/delete/", views.diy_delete_tutorial, name="diy_delete_tutorial"),
     path("api/diy/submit/", views.DIYSubmitView.as_view(), name="diy_submit"),
-
+    path("api/utils/youtube-meta/", views.youtube_meta, name="youtube_meta"),
+    
     # ------------------ DIY Tutorials (server-rendered) --------------
     path("diy/", views.diy_dashboard, name="diy_dashboard"),
 

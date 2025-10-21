@@ -239,19 +239,24 @@ function renderToday(data) {
   `;
 }
 
-async function loadToday() {
+async function loadToday(opts = {}) {
   try {
-    const res = await fetch("{% url 'api_diy_daily' %}");
+    const base = "{% url 'api_diy_daily' %}";
+    const params = new URLSearchParams();
+    params.set("count", "1");           // only need one
+    if (opts.refresh) params.set("refresh", "1");
+    const res = await fetch(`${base}?${params.toString()}`);
     if (res.status === 204) { renderToday(null); return; }
     if (handleAuthErrors(res)) { todayBox.innerHTML = '<p class="text-red-600">Not authorized.</p>'; return; }
     const data = await res.json();
-    renderToday(data);
+    const t = (data && Array.isArray(data.tutorials)) ? data.tutorials[0] : null;
+    renderToday({ date: data?.date, tutorial: t });
   } catch (e) {
     todayBox.innerHTML = '<p class="text-red-600">Failed to load today’s DIY.</p>';
   }
 }
 
-refreshBtn.addEventListener('click', loadToday);
+refreshBtn.addEventListener('click', () => loadToday({ refresh: true }));
 document.addEventListener('DOMContentLoaded', () => {
   const d = document.getElementById('featureDate');
   if (d) d.value = new Date().toISOString().slice(0,10);
