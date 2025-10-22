@@ -125,65 +125,112 @@
 
 <!-- Add/Edit Modal -->
 <div id="diyModal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-  <div class="bg-white p-6 rounded-2xl shadow-xl w-full max-w-2xl relative ring-1 ring-black/5">
+  <div class="bg-white p-7 md:p-8 rounded-2xl shadow-2xl w-full max-w-3xl relative ring-1 ring-black/5">
     <button onclick="closeModal()"
-            class="absolute top-3 right-3 inline-flex items-center justify-center h-9 w-9 rounded-full bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300/60 transition"
+            class="absolute top-3 right-3 inline-flex items-center justify-center h-10 w-10 rounded-full bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300/60 transition"
             aria-label="Close">
       ×
     </button>
-    <h2 id="modalTitle" class="text-xl font-bold mb-4"></h2>
+    <h2 id="modalTitle" class="text-2xl font-bold mb-6"></h2>
 
-    <form id="diyForm" method="post" enctype="multipart/form-data" class="space-y-4">
+    <!-- Bigger fields: scoped styles -->
+    <style>
+      /* Scope to the modal so other forms stay unchanged */
+      #diyModal .modal-form input[type="text"],
+      #diyModal .modal-form input[type="url"],
+      #diyModal .modal-form input[type="number"],
+      #diyModal .modal-form input[type="file"],
+      #diyModal .modal-form textarea,
+      #diyModal .modal-form select {
+        padding: 0.85rem 1rem;      /* larger padding */
+        font-size: 1rem;            /* ~text-base */
+        line-height: 1.5rem;
+      }
+      #diyModal .modal-form textarea {
+        min-height: 8rem;           /* taller description */
+      }
+      #diyModal .modal-form .field {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+      }
+      #diyModal .modal-form label {
+        font-size: 0.95rem;
+      }
+      #diyModal .modal-form .grid {
+        gap: 1.25rem;               /* larger gaps between columns */
+      }
+    </style>
+
+    <form id="diyForm" method="post" enctype="multipart/form-data" class="modal-form space-y-6">
       {% csrf_token %}
       <input type="hidden" id="tutorial_id" name="tutorial_id" value="">
 
-      <div class="grid md:grid-cols-2 gap-4">
-        <div>
+      <!-- Row: Title & Points -->
+      <div class="grid md:grid-cols-12">
+        <div class="field md:col-span-8">
           <label for="id_title" class="block text-sm font-medium">Title</label>
           {{ form.title }}
         </div>
-        <div>
+        <div class="field md:col-span-4">
           <label for="id_points_on_submit" class="block text-sm font-medium">Points on Submit</label>
           {{ form.points_on_submit }}
         </div>
       </div>
 
-      <div>
+      <!-- Description -->
+      <div class="field">
         <label for="id_description" class="block text-sm font-medium">Instructions / Description</label>
         {{ form.description }}
         <p class="text-xs text-gray-500 mt-1">Tip: Start lines with “-”, “*”, or “•” for bullet points.</p>
       </div>
 
-      <div class="grid md:grid-cols-2 gap-4">
-        <div>
+      <!-- Row: URL & Duration -->
+      <div class="grid md:grid-cols-12">
+        <div class="field md:col-span-8">
           <label for="id_video_url" class="block text-sm font-medium">Video URL (YouTube)</label>
           {{ form.video_url }}
-          <button type="button" id="fetchYTMetaBtn"
-                  class="mt-2 inline-flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300/60 transition">
-            Auto-fill from YouTube
-          </button>
+          <div class="flex items-center gap-3 mt-2">
+            <button type="button" id="fetchYTMetaBtn"
+                    class="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300/60 transition">
+              Auto-fill from YouTube
+            </button>
+            <!-- New: force refresh switch -->
+            <label class="inline-flex items-center gap-2 text-sm">
+              {{ form.force_refresh_meta }}
+              <span>Refresh metadata from YouTube</span>
+            </label>
+          </div>
+          {% if form.force_refresh_meta.help_text %}
+            <p class="text-xs text-gray-500 mt-1">{{ form.force_refresh_meta.help_text }}</p>
+          {% endif %}
         </div>
-        <div>
+
+        <div class="field md:col-span-4">
           <label for="id_duration_seconds" class="block text-sm font-medium">Duration (seconds)</label>
           {{ form.duration_seconds }}
         </div>
       </div>
 
-      <div class="grid md:grid-cols-2 gap-4 items-start">
-        <div>
+      <!-- Row: Thumb & Active -->
+      <div class="grid md:grid-cols-12 items-start">
+        <div class="field md:col-span-8">
           <label for="id_thumbnail" class="block text-sm font-medium">Thumbnail</label>
           {{ form.thumbnail }}
           <p class="text-xs text-gray-500 mt-1">Leave empty to keep current image when editing.</p>
-          <img id="ytThumbPreview" alt="" class="mt-2 hidden w-40 h-24 object-cover rounded-lg ring-1 ring-black/5" />
+          <img id="ytThumbPreview" alt="" class="mt-3 hidden w-48 h-28 object-cover rounded-lg ring-1 ring-black/5" />
         </div>
-        <div class="flex items-center gap-2 pt-6">
-          <label for="id_is_active" class="text-sm font-medium">Active in Pool</label>
-          {{ form.is_active }}
+        <div class="md:col-span-4">
+          <label class="block text-sm font-medium mb-2">Status</label>
+          <label for="id_is_active" class="inline-flex items-center gap-2 text-sm">
+            {{ form.is_active }}
+            <span>Active in Pool</span>
+          </label>
         </div>
       </div>
 
       <button id="saveBtn" type="submit"
-              class="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white font-semibold shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/50 active:scale-[.99] transition">
+              class="w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-blue-600 text-white font-semibold shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/50 active:scale-[.99] transition">
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 -ml-0.5" viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14a1 1 0 001-1v-9l-6-6H6a1 1 0 00-1 1v14a1 1 0 001 1zm7-13v5h5"/></svg>
         Save Tutorial
       </button>
@@ -410,7 +457,15 @@ async function fetchYouTubeMeta() {
     const durEl = document.getElementById('id_duration_seconds');
     if (!titleEl.value.trim() && data.title) titleEl.value = data.title;
     if (!durEl.value && data.duration_seconds) durEl.value = data.duration_seconds;
-
+    const descEl = document.getElementById('id_description');
+    if (!descEl.value.trim()) {
+      if (data.description) {
+        descEl.value = data.description.slice(0, 4000);
+      } else if (data.author_url) {
+        const who = data.author_name || 'this creator';
+        descEl.value = `Subscribe to: ${who} — ${data.author_url}`;
+      }
+    }
     if (data.thumbnail) {
       ytThumbPreview.src = data.thumbnail;
       ytThumbPreview.classList.remove('hidden');

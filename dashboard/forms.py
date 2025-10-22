@@ -20,6 +20,22 @@ class DIYTutorialForm(forms.ModelForm):
     video_url = forms.URLField(required=False)
     duration_seconds = forms.IntegerField(min_value=0, required=False)
     thumbnail = forms.ImageField(required=False)
+    description = forms.CharField(
+        required=False,
+        widget=forms.Textarea(attrs={
+            "class": _BASE_INPUT,
+            "rows": 4,
+            "id": "id_description",
+            "placeholder": "Steps, tips… (you can use -, *, • for bullets)",
+        }),
+    )
+
+    force_refresh_meta = forms.BooleanField(
+        required=False,
+        initial=False,
+        label="Refresh metadata from YouTube",
+        help_text="Fetch title, duration, and thumbnail/description from the video URL even if fields are already filled."
+    )
 
     class Meta:
         model = DIYTutorial
@@ -37,12 +53,6 @@ class DIYTutorialForm(forms.ModelForm):
                 "class": _BASE_INPUT,
                 "id": "id_title",
                 "placeholder": "Short, clear title",
-            }),
-            "description": forms.Textarea(attrs={
-                "class": _BASE_INPUT,
-                "rows": 4,
-                "id": "id_description",
-                "placeholder": "Steps, tips… (you can use -, *, • for bullets)",
             }),
             "video_url": forms.URLInput(attrs={
                 "class": _BASE_INPUT,
@@ -67,6 +77,14 @@ class DIYTutorialForm(forms.ModelForm):
                 "class": _CHECKBOX,
                 "id": "id_is_active",
             }),
+        
+        }
+        help_texts = {
+            "video_url": "Paste a YouTube link. Title, duration, and description can auto-fill.",
+            "title": "Leave blank to auto-fill from YouTube.",
+            "description": "Leave blank to auto-fill from YouTube (we’ll truncate to 4000 chars).",
+            "duration_seconds": "Leave blank to auto-fill from YouTube.",
+            "thumbnail": "Optional. If blank, we’ll use the YouTube thumbnail.",
         }
 
     # Optional safety: re-apply classes if overridden elsewhere
@@ -79,22 +97,31 @@ class DIYTutorialForm(forms.ModelForm):
         self.fields["thumbnail"].widget.attrs.setdefault("class", _FILE_INPUT)
         self.fields["points_on_submit"].widget.attrs.setdefault("class", _BASE_INPUT)
         self.fields["is_active"].widget.attrs.setdefault("class", _CHECKBOX)
+        # add class for the non-model checkbox
+        self.fields["force_refresh_meta"].widget.attrs.setdefault("class", _CHECKBOX)
 
     def clean_title(self):
         return (self.cleaned_data.get("title") or "").strip()
 
     def clean_description(self):
-        return (self.cleaned_data.get("description") or "").strip()
+        desc = (self.cleaned_data.get("description") or "").strip()
+        return desc[:4000]
 
     def clean_video_url(self):
         url = (self.cleaned_data.get("video_url") or "").strip()
         return url or None
 
     def clean_points_on_submit(self):
-        pts = int(self.cleaned_data.get("points_on_submit") or 0)
-        if pts < 0:
+        raw = self.cleaned_data.get("points_on_submit")
+        if raw in (None, ""):
+            return 0
+        try:
+            v = int(raw)
+        except (TypeError, ValueError):
+            raise forms.ValidationError("Points must be a whole number ≥ 0.")
+        if v < 0:
             raise forms.ValidationError("Points must be ≥ 0.")
-        return pts
+        return v
 
     def clean_duration_seconds(self):
         dur = self.cleaned_data.get("duration_seconds")

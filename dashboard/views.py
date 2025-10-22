@@ -1007,6 +1007,26 @@ def _reseed_for_date(date_val, request=None, desired_count=None):
             defaults={"pool": pool},
         )
 
+def _youtube_oembed_author(url: str) -> tuple[str | None, str | None]:
+    """
+    Best-effort fetch of channel/author from YouTube oEmbed.
+    Returns (author_name, author_url) or (None, None).
+    """
+    if not url:
+        return None, None
+    try:
+        r = requests.get(
+            "https://www.youtube.com/oembed",
+            params={"url": url, "format": "json"},
+            timeout=6,
+        )
+        if r.ok:
+            data = r.json()
+            return (data.get("author_name") or None, data.get("author_url") or None)
+    except Exception:
+        pass
+    return None, None
+
 
 def _youtube_meta_safe(url: str):
     """
@@ -1084,14 +1104,17 @@ def _youtube_thumb(url: str) -> str | None:
 def youtube_meta(request):
     """
     GET /api/utils/youtube-meta/?url=...
-    -> {success, title, duration_seconds, thumbnail, description}
+    -> {success, title, duration_seconds, thumbnail, description, author_name, author_url}
     """
     url = (request.GET.get("url") or "").strip()
     if not url:
         return Response({"success": False, "error": "Missing url."}, status=400)
 
-    # Do NOT require pytube; _youtube_meta_safe already falls back to oEmbed.
+    # Keep your current robust meta fetch
     title, dur, thumb, desc = _youtube_meta_safe(url)
+
+    # NEW: add author/channel info from oEmbed (cheap & keyless)
+    author_name, author_url = _youtube_oembed_author(url)
 
     if not (title or dur or thumb):
         return Response({"success": False, "error": "Could not fetch metadata."}, status=400)
@@ -1102,7 +1125,10 @@ def youtube_meta(request):
         "duration_seconds": dur,
         "thumbnail": thumb,
         "description": desc,
+        "author_name": author_name,
+        "author_url": author_url,
     })
+
 
 
 # Back-compat alias
@@ -1144,7 +1170,7 @@ def diy_feature_today(request):
         return JsonResponse({"success": False, "error": str(e)}, status=500)
 
 
-
+# views.py
 @require_POST
 @require_admin_json
 def diy_create_tutorial(request):
@@ -1152,19 +1178,39 @@ def diy_create_tutorial(request):
     if form.is_valid():
         t = form.save(commit=False)
 
-        # Auto-fill from YouTube if fields are blank
-        if t.video_url and (not (t.title or "").strip() or not t.duration_seconds or not (t.description or "").strip()):
+        force_refresh = bool(form.cleaned_data.get("force_refresh_meta"))
+        # On create there is no old url; treat as changed
+        url_changed = True
+
+        # Autofill if we should or if fields are blank
+        need_meta = (
+            t.video_url and (
+                force_refresh or url_changed or
+                not (t.title or "").strip() or
+                not t.duration_seconds or
+                not (t.description or "").strip()
+            )
+        )
+
+        if need_meta:
             meta_title, meta_len, _thumb, meta_desc = _youtube_meta_safe(t.video_url)
             if (not (t.title or "").strip()) and meta_title:
                 t.title = meta_title
             if (not t.duration_seconds) and meta_len:
                 t.duration_seconds = meta_len
-            if (not (t.description or "").strip()) and meta_desc:
-                # Optional: trim super long descriptions
-                t.description = meta_desc[:4000]
+            if (not (t.description or "").strip()):
+                if meta_desc:
+                    t.description = meta_desc[:4000]
+                else:
+                    a_name, a_url = _youtube_oembed_author(t.video_url)
+                    if a_url:
+                        who = a_name or "this creator"
+                        t.description = f"Subscribe to: {who} — {a_url}"
+
         t.save()
         return JsonResponse({"success": True, "id": t.id})
     return JsonResponse({"success": False, "errors": form.errors}, status=400)
+
 
 
 @require_POST
@@ -1173,21 +1219,49 @@ def diy_update_tutorial(request, tutorial_id: int):
     t = get_object_or_404(DIYTutorial, pk=tutorial_id)
     old_url = t.video_url or ""
     form = DIYTutorialForm(request.POST, request.FILES, instance=t)
-    if form.is_valid():
-        t = form.save(commit=False)
-        url_changed = (old_url.strip() != (t.video_url or "").strip())
+    if not form.is_valid():
+        return JsonResponse({"success": False, "errors": form.errors}, status=400)
 
-        if t.video_url and (url_changed or not (t.title or "").strip() or not t.duration_seconds or not (t.description or "").strip()):
+    t = form.save(commit=False)
+
+    url_changed = (old_url.strip() != (t.video_url or "").strip())
+    # read from cleaned_data
+    force_refresh = bool(form.cleaned_data.get("force_refresh_meta"))
+
+    if t.video_url and (force_refresh or url_changed or not (t.title or "").strip() or not t.duration_seconds or not (t.description or "").strip()):
+        try:
             meta_title, meta_len, _thumb, meta_desc = _youtube_meta_safe(t.video_url)
-            if (not (t.title or "").strip()) and meta_title:
-                t.title = meta_title
-            if (not t.duration_seconds) and meta_len:
-                t.duration_seconds = meta_len
-            if (not (t.description or "").strip()) and meta_desc:
-                t.description = meta_desc[:4000]
-        t.save()
-        return JsonResponse({"success": True})
-    return JsonResponse({"success": False, "errors": form.errors}, status=400)
+
+            if force_refresh:
+                if meta_title:
+                    t.title = meta_title
+                if meta_len:
+                    t.duration_seconds = meta_len
+                if meta_desc:
+                    t.description = meta_desc[:4000]
+                else:
+                    a_name, a_url = _youtube_oembed_author(t.video_url)
+                    if a_url:
+                        who = a_name or "this creator"
+                        t.description = f"Subscribe to: {who} — {a_url}"
+            else:
+                if (not (t.title or "").strip()) and meta_title:
+                    t.title = meta_title
+                if (not t.duration_seconds) and meta_len:
+                    t.duration_seconds = meta_len
+                if (not (t.description or "").strip()):
+                    if meta_desc:
+                        t.description = meta_desc[:4000]
+                    else:
+                        a_name, a_url = _youtube_oembed_author(t.video_url)
+                        if a_url:
+                            who = a_name or "this creator"
+                            t.description = f"Subscribe to: {who} — {a_url}"
+        except Exception:
+            pass
+
+    t.save()
+    return JsonResponse({"success": True})
 
 
 @require_POST
