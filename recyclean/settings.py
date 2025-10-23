@@ -194,3 +194,20 @@ DIY_DAILY_COUNT = int(os.getenv("DIY_DAILY_COUNT", "3"))   # count per period (3
 DIY_NO_REPEAT_WEEKS = int(os.getenv("DIY_NO_REPEAT_WEEKS", "4"))
 DIY_WEEK_START = int(os.getenv("DIY_WEEK_START", "0"))     # 0=Mon … 6=Sun
 DIY_ROTATION_SALT = int(os.getenv("DIY_ROTATION_SALT", "0"))
+DIY_USER_COOLDOWN_DAYS = 90
+
+
+# ---- YOLO segmentation config ----
+YOLO_SEG_WEIGHTS = BASE_DIR / "ml" / "yolo" / "bottle" / "best.pt"
+YOLO_DEVICE = "cpu"      # start on CPU; switch to 0 for CUDA:0 if available
+YOLO_CONF = 0.68
+YOLO_IOU  = 0.70
+YOLO_MAX_DET = 100
+YOLO_IMG_SIZE = 896
+SEG_CLASS_NAMES = ["small_bottle", "large_bottle"]
+
+DEDUP_SAMECLASS_IOU     = 0.80
+AREA_PROMOTE_LARGE_FRAC = 0.12
+
+# Optional: fail fast if missing
+assert (YOLO_SEG_WEIGHTS).exists(), f"Missing weights at {YOLO_SEG_WEIGHTS}"

@@ -13,7 +13,10 @@ from datetime import datetime, timedelta, date
 from functools import wraps
 from typing import List, Dict, Tuple
 from collections import Counter
-import cv2
+from ultralytics import YOLO
+import torch
+from threading import Lock
+from PIL import Image
 import numpy as np
 from django.urls import reverse
 from django.conf import settings
@@ -58,6 +61,7 @@ from .models import (
     DIYDailySelection,
     DIYSubmission,
     PointsConfig,
+    DetectionSession,
 )
 
 from .services.reloadly import (
@@ -89,6 +93,90 @@ TWO_DP = Decimal("0.01")
 # ==============================================================================
 # Utilities
 # ==============================================================================
+
+# ---------- YOLO: lazy singleton ----------
+_YOLO_MODEL = None
+_YOLO_LOCK = Lock()   # protect first load / shared model use
+
+def _get_yolo():
+    from django.conf import settings as _s
+    global _YOLO_MODEL
+    with _YOLO_LOCK:
+        if _YOLO_MODEL is None:
+            _YOLO_MODEL = YOLO(str(_s.YOLO_SEG_WEIGHTS))
+            _YOLO_MODEL.to(_s.YOLO_DEVICE)
+            # light warm-up to compile kernels / JIT paths
+            try:
+                with torch.inference_mode():
+                    _YOLO_MODEL.predict(
+                        source=np.zeros(( _s.YOLO_IMG_SIZE, _s.YOLO_IMG_SIZE, 3), dtype=np.uint8),
+                        conf=_s.YOLO_CONF, iou=_s.YOLO_IOU, imgsz=_s.YOLO_IMG_SIZE, device=_s.YOLO_DEVICE,
+                        verbose=False, max_det=1
+                    )
+            except Exception:
+                pass
+    return _YOLO_MODEL
+
+_PREDICT_LOCK = Lock()
+
+def _run_yolo_and_summarize(file_obj):
+    from django.conf import settings as _s
+    model = _get_yolo()
+
+    # Open once; keep PIL image for Ultralytics
+    img = Image.open(file_obj).convert("RGB")
+    w, h = img.size
+
+    with _PREDICT_LOCK, torch.inference_mode():
+        r = model.predict(
+            source=img,
+            conf=_s.YOLO_CONF,
+            iou=_s.YOLO_IOU,
+            imgsz=_s.YOLO_IMG_SIZE,
+            device=_s.YOLO_DEVICE,
+            verbose=False,
+            max_det=_s.YOLO_MAX_DET,
+        )[0]
+
+    names = list(getattr(_s, "SEG_CLASS_NAMES", []))  # e.g., ["small_bottle", "large_bottle"]
+
+    items = []
+    counts = {"small": 0, "large": 0}
+
+    has_masks = getattr(r, "masks", None) is not None and getattr(r.masks, "data", None) is not None
+    mask_area_total = None
+    if has_masks:
+        mh, mw = r.masks.data.shape[-2], r.masks.data.shape[-1]
+        mask_area_total = float(mh * mw) if mh and mw else None
+
+    n = len(r.boxes)
+    for i in range(n):
+        cls_id = int(r.boxes.cls[i].item())
+        conf   = float(r.boxes.conf[i].item())
+        name   = names[cls_id] if 0 <= cls_id < len(names) else f"class_{cls_id}"
+        xyxy   = r.boxes.xyxy[i].tolist() if getattr(r.boxes, "xyxy", None) is not None else None
+
+        area_frac = None
+        if has_masks and mask_area_total:
+            m = r.masks.data[i]
+            area_frac = float(m.sum().item()) / mask_area_total if mask_area_total > 0 else None
+
+        # map class name → "small" / "large"
+        size_key = "small" if "small" in name else ("large" if "large" in name else None)
+        if size_key in counts:
+            counts[size_key] += 1
+
+        items.append({
+            "cls_id": cls_id,
+            "cls_name": name,
+            "confidence": conf,
+            "bbox_xyxy": xyxy,
+            "area_frac": area_frac,
+        })
+
+    return items, counts, w, h
+
+
 
 # --- DropOffSite helpers ---
 
@@ -783,6 +871,8 @@ def api_diy_daily(request):
       - Enforces DIY_NO_REPEAT_WEEKS across anchors
     Daily mode (back-compat):
       - Behaves as before (count per day; DIY_NO_REPEAT_DAYS)
+    Per-user:
+      - Excludes tutorials the user submitted within the cooldown window from their view.
     """
     today = today_ph()
     anchor = _period_anchor(today)
@@ -801,10 +891,33 @@ def api_diy_daily(request):
         .order_by("id")
     )
 
+    # --- per-user recent submission ids (for hiding + flag) ---
+    user = request.user if request.user.is_authenticated else None
+    recent_user_tids = set()
+    if user:
+        cutoff = _cooldown_cutoff()
+        recent_user_tids = set(
+            DIYSubmission.objects
+            .filter(user=user, created_at__date__gte=cutoff)
+            .values_list("tutorial_id", flat=True)
+            .distinct()
+        )
+
+    # Short-circuit if we already have this week's picks stored
     if not refresh and existing.count() >= desired_count:
         tutorials = [e.tutorial for e in existing[:desired_count]]
+
+        # HIDE tutorials the user has recently submitted (cooldown)
+        if user and recent_user_tids:
+            tutorials = [t for t in tutorials if t.id not in recent_user_tids]
+
+        # Build has_submitted map only within cooldown window
+        has_recent = {}
+        if user and tutorials:
+            shown_ids = [t.id for t in tutorials]
+            has_recent = {tid: (tid in recent_user_tids) for tid in shown_ids}
+
         return Response({
-            # NOTE: return the *anchor* date so clients can label "This week"
             "date": str(anchor),
             "tutorials": [
                 {
@@ -815,10 +928,8 @@ def api_diy_daily(request):
                     "video_url": t.video_url,
                     "thumbnail": _abs_or_none(request, t.thumbnail) or _youtube_thumb(t.video_url),
                     "points_on_submit": t.points_on_submit,
-                    "has_submitted": (
-                        request.user.is_authenticated
-                        and DIYSubmission.objects.filter(user=request.user, tutorial=t).exists()
-                    ),
+                    # True only if still in cooldown
+                    "has_submitted": (has_recent.get(t.id, False) if user else False),
                 }
                 for t in tutorials
             ],
@@ -846,12 +957,15 @@ def api_diy_daily(request):
         .distinct()
     )
 
+    # Candidate universe for THIS USER this week:
     base_qs = pool.tutorials.filter(is_active=True)
+
     candidates_excl = list(base_qs.exclude(id__in=recent_ids).order_by("id").values_list("id", flat=True))
     candidates_all  = list(base_qs.order_by("id").values_list("id", flat=True))
 
     ids = candidates_excl if candidates_excl else candidates_all
     if not ids:
+        # nothing left for this user this week
         return Response(status=204)
 
     # Round-robin start = function of the *anchor* (weekly) + salt
@@ -889,6 +1003,17 @@ def api_diy_daily(request):
     )[:desired_count]
 
     tutorials = [e.tutorial for e in final]
+
+    # HIDE cooldown tutorials from the response
+    if user and recent_user_tids:
+        tutorials = [t for t in tutorials if t.id not in recent_user_tids]
+
+    # has_submitted map (within cooldown only)
+    has_recent = {}
+    if user and tutorials:
+        shown_ids = [t.id for t in tutorials]
+        has_recent = {tid: (tid in recent_user_tids) for tid in shown_ids}
+
     return Response({
         "date": str(anchor),
         "tutorials": [
@@ -900,18 +1025,24 @@ def api_diy_daily(request):
                 "video_url": t.video_url,
                 "thumbnail": _abs_or_none(request, t.thumbnail) or _youtube_thumb(t.video_url),
                 "points_on_submit": t.points_on_submit,
-                "has_submitted": (
-                    request.user.is_authenticated
-                    and DIYSubmission.objects.filter(user=request.user, tutorial=t).exists()
-                ),
+                "has_submitted": (has_recent.get(t.id, False) if user else False),
             }
             for t in tutorials
         ],
     })
 
+
 # --- helpers near your other utils ---
 
 # --- DIY weekly helpers ---
+
+# --- DIY per-user cooldown helpers ---
+def _cooldown_days() -> int:
+    return int(getattr(settings, "DIY_USER_COOLDOWN_DAYS", 90))
+
+def _cooldown_cutoff():
+    return today_ph() - timedelta(days=_cooldown_days())
+
 def _week_anchor(d: date) -> date:
     """Return the start-of-week date using DIY_WEEK_START (0=Mon..6=Sun)."""
     wk_start = int(getattr(settings, "DIY_WEEK_START", 0))
@@ -1301,6 +1432,126 @@ def diy_delete_tutorial(request, tutorial_id: int):
 
     return JsonResponse({"success": True, "reseeded_dates": [str(d) for d in affected_dates]})
 
+# ============================ Open CV Image Processing ==========================================
+
+class VisionDetectView(views.APIView):
+    permission_classes = [IsStaffish]
+    parser_classes = [MultiPartParser]
+
+    def post(self, request):
+        image = request.FILES.get("image")
+        dropoff_site_id = request.data.get("dropoff_site_id")
+        if not image or not dropoff_site_id:
+            return Response({"success": False, "error": "Missing image or dropoff_site_id."}, status=400)
+
+        try:
+            # 1) Run detection ONCE
+            items, counts, w, h = _run_yolo_and_summarize(image)
+        except Exception:
+            LOGGER.exception("YOLO inference failed")
+            return Response({"success": False, "error": "Image analysis failed."}, status=400)
+
+        # 2) Rewind before saving the same file object to the model field
+        try:
+            image.seek(0)
+        except Exception:
+            pass
+
+        # 3) Persist detection session for later edits/confirm
+        session = DetectionSession.objects.create(
+            staff=request.user,
+            image=image,
+            items=items,
+            width=w,
+            height=h,
+        )
+
+        # 4) Prepare default bottle_data + points
+        bottle_data = [
+            {"size": "small", "count": int(counts.get("small", 0))},
+            {"size": "large", "count": int(counts.get("large", 0))},
+        ]
+        proposed_points = compute_points(bottle_data)
+
+        return Response({
+            "success": True,
+            "session_id": session.id,
+            "image_url": request.build_absolute_uri(session.image.url),
+            "auto_counts": counts,
+            "bottle_data": bottle_data,
+            "proposed_points": proposed_points,
+        }, status=201)
+
+        
+
+class VisionConfirmView(views.APIView):
+    permission_classes = [IsStaffish]
+    parser_classes = [JSONParser, FormParser, MultiPartParser]
+
+    def post(self, request):
+        try:
+            session_id = int(request.data.get("session_id"))
+            dropoff_site_id = int(request.data.get("dropoff_site_id"))
+        except Exception:
+            return Response({"success": False, "error": "Invalid session_id or dropoff_site_id."}, status=400)
+
+        # Allow bottle_data override from UI (editable)
+        edited = request.data.get("bottle_data")
+        if isinstance(edited, str):
+            try:
+                edited = json.loads(edited)
+            except Exception:
+                edited = None
+
+        session = get_object_or_404(DetectionSession, pk=session_id, staff=request.user)
+        site = get_object_or_404(DropOffSite, pk=dropoff_site_id)
+
+        if not edited or not isinstance(edited, list):
+            small = sum(1 for i in (session.items or []) if "small" in (i.get("cls_name","").lower()))
+            large = sum(1 for i in (session.items or []) if "large" in (i.get("cls_name","").lower()))
+            bottle_data = [{"size": "small", "count": small}, {"size": "large", "count": large}]
+        else:
+            bottle_data = []
+            for it in edited:
+                size = (it.get("size") or "").lower()
+                if size in {"small", "large"}:
+                    try:
+                        cnt = int(it.get("count", 0))
+                    except Exception:
+                        cnt = 0
+                    bottle_data.append({"size": size, "count": max(0, cnt)})
+
+        proposed_points = compute_points(bottle_data)
+        qr_token = secrets.token_urlsafe(24)
+        expires = timezone.now() + timedelta(hours=1)
+
+        with transaction.atomic():
+            sub = Submission.objects.create(
+                staff=request.user,
+                dropoff_site=site,
+                bottle_data=bottle_data,
+                proposed_points=proposed_points,
+                claimed_points=0,
+                qr_token=qr_token,
+                qr_expires_at=expires,
+                status="pending",
+                source="vision",
+                image=session.image,  # keep original photo
+                estimated_quantity=sum(int(x["count"]) for x in bottle_data),
+                confidence_score=None,
+            )
+            StaffTransaction.objects.create(
+                staff=request.user, submission=sub, action="submission_created", notes="via vision"
+            )
+            session.delete()
+
+        return Response({
+            "success": True,
+            "submission_id": sub.id,
+            "proposed_points": proposed_points,
+            "qr_token": qr_token,
+            "qr_expires_at": expires.isoformat(),
+        }, status=201)
 
 
 
@@ -1316,12 +1567,31 @@ class DIYSubmitView(views.APIView):
         user: User = request.user
         tutorial = get_object_or_404(DIYTutorial, pk=ser.validated_data["tutorial_id"])
 
-        existing = DIYSubmission.objects.filter(user=user, tutorial=tutorial).first()
-        if existing:
+        # 1) Enforce cooldown: block if user submitted this DIY within N days
+        cutoff = _cooldown_cutoff()
+        if DIYSubmission.objects.filter(
+            user=user, tutorial=tutorial, created_at__date__gte=cutoff
+        ).exists():
             return Response(
-                {"success": True, "message": "Already submitted for this DIY.", "points_awarded": existing.points_awarded},
-                status=200,
+                {
+                    "success": False,
+                    "error": f"You’ve already submitted this DIY recently. Try again after {_cooldown_days()} days.",
+                    "cooldown_days": _cooldown_days(),
+                },
+                status=400,
             )
+
+        # 2) Enforce "must be in this week's rotation" to re-submit
+        anchor = _period_anchor(today_ph())
+        in_this_week = DIYDailySelection.objects.filter(date=anchor, tutorial=tutorial).exists()
+        if not in_this_week:
+            return Response(
+                {"success": False, "error": "This DIY is not in this week’s selection."},
+                status=400,
+            )
+
+        # 3) (Optional safety) if they submitted a long time ago (beyond cooldown),
+        #    allow again (we do, since the check above passed).
 
         with transaction.atomic():
             sub = DIYSubmission.objects.create(
@@ -2744,51 +3014,7 @@ def get_user_details(request, user_id: int):
     })
 
 
-# ==============================================================================
-# Image analysis (prototype)
-# ==============================================================================
 
-@csrf_exempt
-@api_view(["POST"])
-@parser_classes([MultiPartParser])
-def analyze_image(request):
-    image_file = request.FILES.get("image")
-    if not image_file:
-        return JsonResponse({"error": "No image provided"}, status=400)
-
-    file_bytes = np.asarray(bytearray(image_file.read()), dtype=np.uint8)
-    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    if img is None:
-        return JsonResponse({"error": "Failed to decode image"}, status=400)
-
-    img = cv2.resize(img, (640, 480))
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.medianBlur(gray, 5)
-    edges = cv2.Canny(blurred, 50, 150)
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    bottle_counts = {"small": 0, "large": 0}
-    for contour in contours:
-        _, _, w, h = cv2.boundingRect(contour)
-        if h < 100 or w < 30:
-            continue
-        if h <= 200:
-            bottle_counts["small"] += 1
-        else:
-            bottle_counts["large"] += 1
-
-    total_detected = sum(bottle_counts.values())
-    confidence = round(min(1.0, total_detected / 5.0), 2)
-    suggested_size = max(bottle_counts, key=bottle_counts.get) if total_detected > 0 else "unknown"
-
-    return JsonResponse(
-        {
-            "total_detected": total_detected,
-            "confidence_score": confidence,
-            "suggested_size": suggested_size,
-            "bottle_sizes": bottle_counts,
-        }
-    )
 
 
 # ==============================================================================

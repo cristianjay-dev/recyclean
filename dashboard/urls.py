@@ -1,12 +1,11 @@
 # dashboard/urls.py
 from django.urls import path, reverse_lazy
 from django.http import HttpResponse
-from . import views
 from django.contrib.auth import views as auth_views
-
+from . import views
 
 urlpatterns = [
-    # Auth pages
+    # -------- Auth pages (server-rendered) --------
     path(
         "",
         auth_views.LoginView.as_view(
@@ -15,10 +14,9 @@ urlpatterns = [
         ),
         name="login",
     ),
-
     path("logout/", auth_views.LogoutView.as_view(next_page="login"), name="logout"),
 
-    # Password reset (use your custom templates)
+    # Password reset
     path(
         "password_reset/",
         auth_views.PasswordResetView.as_view(
@@ -52,44 +50,44 @@ urlpatterns = [
 
     path("reauth-admin/", views.reauth_admin, name="reauth_admin"),
 
-    
-    # ------------------ Dashboard (server-rendered) ------------------
+    # -------- Dashboard (server-rendered) --------
     path("dashboard/", views.dashboard, name="dashboard"),
     path("rewards/", views.reward_requests_view, name="reward_requests"),
 
-    # ------------------ Image Processing (prototype) -----------------
-    path("analyze/", views.analyze_image, name="analyze_image"),
+    # -------- Vision (YOLO detect → confirm) --------
+    path("api/vision/detect/", views.VisionDetectView.as_view(), name="vision_detect"),
+    path("api/vision/confirm/", views.VisionConfirmView.as_view(), name="vision_confirm"),
+    # Back-compat alias (old prototype URL -> detect)
+    path("analyze/", views.VisionDetectView.as_view(), name="analyze_image"),
 
-    # ------------------ Submissions / Drop-off Sites (server-rendered)
-    # Canonical paths used by the sidebar
+    # -------- Submissions / Drop-off Sites (server-rendered) --------
     path("submissions/", views.submissions_admin_view, name="dropoff_sites_view"),
     path("submissions/<int:site_id>/", views.dropoff_site_detail, name="dropoff_site_detail"),
     path("submissions/<int:site_id>/submissions/", views.submissions_by_dropoff_site, name="submissions_by_dropoff_site"),
 
-
-    # CSV exports (canonical)
+    # CSV exports
     path("submissions/export.csv", views.export_all_submissions_csv, name="export_all_submissions_csv"),
     path("submissions/<int:site_id>/export.csv", views.export_site_submissions_csv, name="export_site_submissions_csv"),
 
-    # Delete site (canonical)
+    # Delete site
     path("submissions/<int:site_id>/delete/", views.delete_dropoff_site, name="delete_dropoff_site"),
 
-    # ---- Legacy aliases (kept for back-compat; safe to remove later) ----
+    # Legacy aliases
     path("dropoff-sites/", views.submissions_admin_view, name="dropoff_sites_alias"),
     path("dropoff-sites/<int:site_id>/", views.dropoff_site_detail, name="dropoff_site_detail_legacy"),
     path("dropoff-sites/<int:site_id>/export.csv", views.export_site_submissions_csv, name="export_site_submissions_csv_legacy"),
     path("exports/submissions.csv", views.export_all_submissions_csv, name="export_all_submissions_csv_legacy"),
     path("delete-dropoff-site/<int:site_id>/", views.delete_dropoff_site, name="delete_dropoff_site_legacy"),
 
-    # ------------------ Staff Management (server-rendered) -----------
+    # -------- Staff Management (server-rendered) --------
     path("staff-management/", views.staff_management_view, name="staff_management_view"),
 
-    # ------------------ Staff Metrics APIs ---------------------------
+    # -------- Staff Metrics APIs --------
     path("api/staff/metrics/<int:staff_id>/", views.staff_metrics, name="staff_metrics"),
     path("api/staff/monitor/<int:staff_id>/", views.staff_monitor, name="staff_monitor"),
     path("api/config/points/", views.PointsConfigView.as_view(), name="points_config"),
-    # Approvals (JSON helpers for server pages)
-    # ------------------ Auth: Staff ---------------------------------
+
+    # -------- Auth: Staff --------
     path("api/auth/staff/signup/", views.StaffSignupView.as_view(), name="staff_signup"),
     path("api/auth/staff/login/", views.StaffLoginView.as_view(), name="staff_login"),
     path("api/auth/staff/approve/<int:user_id>/", views.ApproveStaffView.as_view(), name="approve_staff"),
@@ -98,20 +96,20 @@ urlpatterns = [
     path("api/utils/username-available/", views.username_available, name="username_available"),
     path("api/user/<int:user_id>/history/", views.user_history, name="user_history"),
 
-    # ------------------ Barangays -----------------------------------
+    # -------- Barangays --------
     path("api/barangays/", views.list_barangays, name="list_barangays"),
     path("api/barangays", views.list_barangays, name="list_barangays_noslash"),
     path("api/geo/barangays/", views.list_barangays, name="list_barangays_legacy"),
     path("api/geo/barangays", views.list_barangays, name="list_barangays_legacy_noslash"),
 
-    # ------------------ Auth: Resident -------------------------------
+    # -------- Auth: Resident --------
     path("api/auth/resident/signup/", views.ResidentSignupView.as_view(), name="resident_signup"),
     path("api/auth/resident/login/", views.ResidentLoginView.as_view(), name="resident_login"),
     path("api/me/", views.MeView.as_view(), name="me"),
     path("api/auth/change-password/", views.ChangePasswordView.as_view(), name="change_password"),
     path("api/change-password/", views.ChangePasswordView.as_view(), name="change-password"),
 
-    # ------------------ Submissions: intake → QR → claim -------------
+    # -------- Submissions: intake → QR → claim --------
     path("api/submissions/intake/", views.SubmissionIntakeView.as_view(), name="submission_intake"),
     path("api/submissions/<int:submission_id>/qr.png", views.SubmissionQRView.as_view(), name="submission_qr"),
     path("api/submissions/claim/", views.SubmissionClaimView.as_view(), name="submission_claim"),
@@ -123,18 +121,18 @@ urlpatterns = [
     path("staff-actions/<int:user_id>/reactivate/", views.reactivate_staff_json, name="reactivate_staff_json"),
     path("staff-actions/<int:user_id>/hard-delete/", views.hard_delete_staff_json, name="hard_delete_staff_json"),
 
-    # Staff transaction history used by the modal
+    # Staff transaction history
     path("api/staff/<int:staff_id>/transactions/", views.staff_transaction_history, name="staff_transactions"),
 
-    # ------------------ User dashboard data --------------------------
+    # -------- User dashboard data --------
     path("api/user/<int:user_id>/", views.get_user_details, name="get_user_details"),
 
-    # ------------------ Rewards (Reloadly) ---------------------------
+    # -------- Rewards (Reloadly) --------
     path("api/rewards/redeem/", views.RedeemRewardView.as_view(), name="redeem_reward"),
     path("webhooks/reloadly/", views.reloadly_webhook, name="reloadly_webhook"),
     path("api/utils/normalize-phone/", views.normalize_phone_ph, name="normalize_phone_ph"),
 
-    # ------------------ DIY Tutorials (API) --------------------------
+    # -------- DIY Tutorials (API) --------
     path("api/diy/daily/", views.api_diy_daily, name="api_diy_daily"),
     path("api/diy/daily", views.api_diy_daily, name="api_diy_daily_noslash"),
     path("api/diy/daily/alias/", views.diy_daily, name="diy_daily"),
@@ -145,17 +143,17 @@ urlpatterns = [
     path("api/diy/<int:tutorial_id>/delete/", views.diy_delete_tutorial, name="diy_delete_tutorial"),
     path("api/diy/submit/", views.DIYSubmitView.as_view(), name="diy_submit"),
     path("api/utils/youtube-meta/", views.youtube_meta, name="youtube_meta"),
-    
-    # ------------------ DIY Tutorials (server-rendered) --------------
+
+    # -------- DIY (server-rendered) --------
     path("diy/", views.diy_dashboard, name="diy_dashboard"),
 
-    # ------------------ Legacy auth aliases (optional) ---------------
+    # -------- Legacy auth aliases --------
     path("api/staff-signup/", views.StaffSignupView.as_view(), name="legacy_staff_signup"),
     path("api/staff-login/", views.StaffLoginView.as_view(), name="legacy_staff_login"),
     path("api/user-signup/", views.ResidentSignupView.as_view(), name="legacy_resident_signup"),
     path("api/user-login/", views.ResidentLoginView.as_view(), name="legacy_resident_login"),
     path("api/redeem-reward/", views.RedeemRewardView.as_view(), name="legacy_redeem_reward"),
 
-    # Simple health check
+    # Health check
     path("health/", lambda r: HttpResponse("ok"), name="health"),
 ]

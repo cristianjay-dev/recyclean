@@ -215,6 +215,25 @@ class Submission(models.Model):
         who = getattr(self.claimed_by or self.user, "username", None) or "Unclaimed"
         return f"Submission({who}, {self.proposed_points}->{self.claimed_points} pts, {self.status})"
 
+class DetectionSession(models.Model):
+    """
+    Temporary store for staff-uploaded image and raw YOLO results prior to confirm.
+    Staff edits happen on these 'items', then we create a real Submission from them.
+    """
+    staff  = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="vision_sessions")
+    image  = models.ImageField(upload_to="detections/%Y/%m/%d/")   # original photo
+    items  = models.JSONField(default=list, blank=True)            # [{cls_name, conf, bbox, polygon?, area_frac}]
+    width  = models.PositiveIntegerField(null=True, blank=True)    # image width at detect time
+    height = models.PositiveIntegerField(null=True, blank=True)    # image height at detect time
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "vision_detection_sessions"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"DetectSession {self.id} by {self.staff_id}"
+
 
 class StaffTransaction(models.Model):
     staff = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="staff_transactions")
@@ -395,8 +414,8 @@ class DIYSubmission(models.Model):
     class Meta:
         db_table = "diy_submissions"
         ordering = ["-created_at"]
-        constraints = [
-            models.UniqueConstraint(fields=["user", "tutorial"], name="uniq_user_tutorial"),
+        indexes = [
+            models.Index(fields=["user", "tutorial", "created_at"]),
         ]
 
     def __str__(self) -> str:
