@@ -11,6 +11,10 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=BASE_DIR / ".env.local")
 
+ULTRA_DIR = BASE_DIR / ".ultralytics"
+ULTRA_DIR.mkdir(exist_ok=True)
+os.environ.setdefault("YOLO_CONFIG_DIR", str(ULTRA_DIR))
+
 # -----------------------------------------------------------------------------
 # Core security & app config
 # -----------------------------------------------------------------------------
