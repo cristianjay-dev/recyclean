@@ -1,6 +1,6 @@
 # views.py — Recyclean (auth, submissions, rewards, DIY CRUD + daily rotation + summary CSVs)
 from __future__ import annotations
-
+from django.db.models import Q
 import csv
 import io
 import json
@@ -925,15 +925,17 @@ def api_diy_daily(request):
                     "title": t.title,
                     "description": t.description,
                     "description_html": _render_bullets_or_paragraph(t.description),
-                    "video_url": t.video_url,
+                    "video_url": t.video_url,  # keep for linking out
+                    "embed_url": _youtube_embed(t.video_url),  # <-- NEW (use this in your iframe)
+                    "is_embeddable": _youtube_is_embeddable(t.video_url),
                     "thumbnail": _abs_or_none(request, t.thumbnail) or _youtube_thumb(t.video_url),
                     "points_on_submit": t.points_on_submit,
-                    # True only if still in cooldown
                     "has_submitted": (has_recent.get(t.id, False) if user else False),
                 }
                 for t in tutorials
             ],
         })
+
 
     # Build/sync the pool for this anchor
     pool, _ = DIYDailyPool.objects.get_or_create(date=anchor)
@@ -1023,6 +1025,8 @@ def api_diy_daily(request):
                 "description": t.description,
                 "description_html": _render_bullets_or_paragraph(t.description),
                 "video_url": t.video_url,
+                "embed_url": _youtube_embed(t.video_url),  # <-- NEW
+                "is_embeddable": _youtube_is_embeddable(t.video_url),
                 "thumbnail": _abs_or_none(request, t.thumbnail) or _youtube_thumb(t.video_url),
                 "points_on_submit": t.points_on_submit,
                 "has_submitted": (has_recent.get(t.id, False) if user else False),
@@ -1032,7 +1036,37 @@ def api_diy_daily(request):
     })
 
 
+
 # --- helpers near your other utils ---
+def _youtube_embed(url: str) -> str | None:
+    vid = _youtube_id(url or "")
+    return f"https://www.youtube.com/embed/{vid}" if vid else None
+
+
+
+def _is_duplicate_youtube(vid: str, exclude_id: int | None = None) -> bool:
+    """
+    Checks if a tutorial with this YouTube video id already exists.
+    Works even if older rows weren't normalized yet.
+    """
+    if not vid:
+        return False
+    qs = DIYTutorial.objects.all()
+    if exclude_id:
+        qs = qs.exclude(pk=exclude_id)
+
+    norm = f"https://www.youtube.com/watch?v={vid}"
+
+    return qs.filter(
+        Q(video_url__iexact=norm) |
+        Q(video_url__iendswith=f"/embed/{vid}") |
+        Q(video_url__iendswith=f"/shorts/{vid}") |
+        Q(video_url__icontains=f"v={vid}") |
+        Q(video_url__iendswith=f"/{vid}") |            # youtu.be/<vid>
+        Q(video_url__icontains=f"/{vid}?")             # youtu.be/<vid>?t=...
+    ).exists()
+
+
 
 # --- DIY weekly helpers ---
 
@@ -1137,6 +1171,24 @@ def _reseed_for_date(date_val, request=None, desired_count=None):
             tutorial_id=tid,
             defaults={"pool": pool},
         )
+
+def _youtube_is_embeddable(url: str) -> bool:
+    """
+    Quick check: if YouTube oEmbed returns 200, treat as embeddable.
+    Private/removed/embed-disabled usually fail here.
+    """
+    if not url:
+        return False
+    try:
+        r = requests.get(
+            "https://www.youtube.com/oembed",
+            params={"url": url, "format": "json"},
+            timeout=6,
+        )
+        return bool(r.ok)
+    except Exception:
+        return False
+
 
 def _youtube_oembed_author(url: str) -> tuple[str | None, str | None]:
     """
@@ -1338,7 +1390,18 @@ def diy_create_tutorial(request):
                         who = a_name or "this creator"
                         t.description = f"Subscribe to: {who} — {a_url}"
 
+        vid = _youtube_id(t.video_url or "")
+        if not vid:
+            return JsonResponse({"success": False, "errors": {"video_url": ["Invalid YouTube URL."]}}, status=400)
+
+        # Block duplicates
+        if _is_duplicate_youtube(vid):
+            return JsonResponse({"success": False, "errors": {"video_url": ["This YouTube video is already added."]}}, status=400)
+
+        # Normalize stored URL
+        t.video_url = f"https://www.youtube.com/watch?v={vid}"
         t.save()
+
         return JsonResponse({"success": True, "id": t.id})
     return JsonResponse({"success": False, "errors": form.errors}, status=400)
 
@@ -1391,7 +1454,18 @@ def diy_update_tutorial(request, tutorial_id: int):
         except Exception:
             pass
 
+    vid = _youtube_id(t.video_url or "")
+    if not vid:
+        return JsonResponse({"success": False, "errors": {"video_url": ["Invalid YouTube URL."]}}, status=400)
+
+    # Block duplicates excluding self
+    if _is_duplicate_youtube(vid, exclude_id=t.id):
+        return JsonResponse({"success": False, "errors": {"video_url": ["This YouTube video is already added."]}}, status=400)
+
+    # Normalize stored URL
+    t.video_url = f"https://www.youtube.com/watch?v={vid}"
     t.save()
+
     return JsonResponse({"success": True})
 
 

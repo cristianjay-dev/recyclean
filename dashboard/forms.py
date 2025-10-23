@@ -1,6 +1,8 @@
 # forms.py
 from django import forms
 from django.contrib.auth.models import Group
+from django.db.models import Q
+from urllib.parse import urlparse, parse_qs
 
 from .models import DIYTutorial, DropOffSite, User, PointsConfig
 
@@ -107,9 +109,47 @@ class DIYTutorialForm(forms.ModelForm):
         desc = (self.cleaned_data.get("description") or "").strip()
         return desc[:4000]
 
+    @staticmethod
+    def _yt_id_from_url(url: str) -> str | None:
+        try:
+            p = urlparse(url or "")
+            if p.netloc in {"youtu.be"}:
+                return p.path.lstrip("/") or None
+            if "youtube.com" in p.netloc:
+                if p.path == "/watch":
+                    return (parse_qs(p.query).get("v") or [None])[0]
+                parts = p.path.strip("/").split("/")
+                if parts and parts[0] in {"embed", "shorts", "v"} and len(parts) > 1:
+                    return parts[1]
+        except Exception:
+            return None
+        return None
+
     def clean_video_url(self):
         url = (self.cleaned_data.get("video_url") or "").strip()
-        return url or None
+        if not url:
+            return None
+
+        vid = self._yt_id_from_url(url)  # <-- call via self (now static, no self arg passed)
+        if not vid:
+            raise forms.ValidationError("Invalid YouTube URL.")
+        normalized = f"https://www.youtube.com/watch?v={vid}"
+
+        instance_id = self.instance.id if getattr(self, "instance", None) and self.instance.id else None
+        exists = (DIYTutorial.objects
+                  .exclude(pk=instance_id)
+                  .filter(
+                      Q(video_url__iexact=normalized) |
+                      Q(video_url__iendswith=f"/embed/{vid}") |
+                      Q(video_url__iendswith=f"/shorts/{vid}") |
+                      Q(video_url__icontains=f"v={vid}") |
+                      Q(video_url__iendswith=f"/{vid}") |
+                      Q(video_url__icontains=f"/{vid}?")
+                  )
+                  .exists())
+        if exists:
+            raise forms.ValidationError("This YouTube video is already added.")
+        return normalized
 
     def clean_points_on_submit(self):
         raw = self.cleaned_data.get("points_on_submit")
