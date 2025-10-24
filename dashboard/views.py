@@ -893,12 +893,16 @@ def api_diy_daily(request):
 
     # --- per-user recent submission ids (for hiding + flag) ---
     user = request.user if request.user.is_authenticated else None
-    recent_user_tids = set()
+    submitted_this_period_tids = set()
     if user:
-        cutoff = _cooldown_cutoff()
-        recent_user_tids = set(
+        start_d, end_d = _period_window(today)
+        submitted_this_period_tids = set(
             DIYSubmission.objects
-            .filter(user=user, created_at__date__gte=cutoff)
+            .filter(
+                user=user,
+                created_at__date__gte=start_d,
+                created_at__date__lt=end_d,
+            )
             .values_list("tutorial_id", flat=True)
             .distinct()
         )
@@ -906,16 +910,13 @@ def api_diy_daily(request):
     # Short-circuit if we already have this week's picks stored
     if not refresh and existing.count() >= desired_count:
         tutorials = [e.tutorial for e in existing[:desired_count]]
-
-        # HIDE tutorials the user has recently submitted (cooldown)
-        if user and recent_user_tids:
-            tutorials = [t for t in tutorials if t.id not in recent_user_tids]
-
-        # Build has_submitted map only within cooldown window
+        
+        # Per-period "has_submitted" flag (do NOT hide)
         has_recent = {}
         if user and tutorials:
             shown_ids = [t.id for t in tutorials]
-            has_recent = {tid: (tid in recent_user_tids) for tid in shown_ids}
+            has_recent = {tid: (tid in submitted_this_period_tids) for tid in shown_ids}
+
 
         return Response({
             "date": str(anchor),
@@ -959,16 +960,45 @@ def api_diy_daily(request):
         .distinct()
     )
 
-    # Candidate universe for THIS USER this week:
+    # Hard rule: never repeat last week's picks if enabled
+    last_week_ids = set()
+    if getattr(settings, "DIY_NO_CONSECUTIVE_WEEKS", True):
+        last_anchor = _last_period_anchor(anchor)
+        last_week_ids = set(
+            DIYDailySelection.objects
+            .filter(date=last_anchor)
+            .values_list("tutorial_id", flat=True)
+        )
+
     base_qs = pool.tutorials.filter(is_active=True)
 
-    candidates_excl = list(base_qs.exclude(id__in=recent_ids).order_by("id").values_list("id", flat=True))
-    candidates_all  = list(base_qs.order_by("id").values_list("id", flat=True))
+    # Stage 1 (strict): exclude both RECENT WINDOW and LAST WEEK
+    strict_exclusions = recent_ids.union(last_week_ids)
+    candidates_strict = list(
+        base_qs.exclude(id__in=strict_exclusions)
+               .order_by("id")
+               .values_list("id", flat=True)
+    )
 
-    ids = candidates_excl if candidates_excl else candidates_all
+    # Stage 2 (soft): if we can't fill, relax the *wider* no-repeat window,
+    # but STILL exclude last week (hard rule).
+    if (not candidates_strict or len(candidates_strict) < desired_count) and \
+       getattr(settings, "DIY_SOFT_NO_REPEAT_WHEN_POOL_SMALL", True):
+        candidates_relaxed = list(
+            base_qs.exclude(id__in=last_week_ids)
+                   .order_by("id")
+                   .values_list("id", flat=True)
+        )
+        ids = candidates_relaxed if candidates_relaxed else list(base_qs.order_by("id").values_list("id", flat=True))
+    else:
+        ids = candidates_strict if candidates_strict else list(base_qs.order_by("id").values_list("id", flat=True))
+
+    # If the hard rule leaves us with fewer than desired_count, we prefer returning fewer
+    # rather than violating "no consecutive weeks".
     if not ids:
-        # nothing left for this user this week
         return Response(status=204)
+    
+    candidates_all  = list(base_qs.order_by("id").values_list("id", flat=True))
 
     # Round-robin start = function of the *anchor* (weekly) + salt
     salt = int(getattr(settings, "DIY_ROTATION_SALT", 0))
@@ -1006,15 +1036,12 @@ def api_diy_daily(request):
 
     tutorials = [e.tutorial for e in final]
 
-    # HIDE cooldown tutorials from the response
-    if user and recent_user_tids:
-        tutorials = [t for t in tutorials if t.id not in recent_user_tids]
-
-    # has_submitted map (within cooldown only)
+    # Per-period "has_submitted" flag (do NOT hide)
     has_recent = {}
     if user and tutorials:
         shown_ids = [t.id for t in tutorials]
-        has_recent = {tid: (tid in recent_user_tids) for tid in shown_ids}
+        has_recent = {tid: (tid in submitted_this_period_tids) for tid in shown_ids}
+
 
     return Response({
         "date": str(anchor),
@@ -1070,23 +1097,28 @@ def _is_duplicate_youtube(vid: str, exclude_id: int | None = None) -> bool:
 
 # --- DIY weekly helpers ---
 
-# --- DIY per-user cooldown helpers ---
-def _cooldown_days() -> int:
-    return int(getattr(settings, "DIY_USER_COOLDOWN_DAYS", 90))
-
-def _cooldown_cutoff():
-    return today_ph() - timedelta(days=_cooldown_days())
-
 def _week_anchor(d: date) -> date:
-    """Return the start-of-week date using DIY_WEEK_START (0=Mon..6=Sun)."""
-    wk_start = int(getattr(settings, "DIY_WEEK_START", 0))
-    offset = (d.weekday() - wk_start) % 7
-    return d - timedelta(days=offset)
+    wk_start = int(getattr(settings, "DIY_WEEK_START", 0))  # 0=Mon..6=Sun
+    delta = (d.weekday() - wk_start) % 7
+    return d - timedelta(days=delta)
 
 def _period_anchor(d: date) -> date:
     """Return anchor date based on DIY_PERIOD (day|week)."""
     period = (getattr(settings, "DIY_PERIOD", "day") or "day").lower()
     return _week_anchor(d) if period == "week" else d
+
+def _period_window(d: date) -> tuple[date, date]:
+    """
+    Return [start_date, end_date) for the current period.
+    If DIY_PERIOD=week → start = week anchor, end = +7 days.
+    If DIY_PERIOD=day  → start = that day,     end = +1 day.
+    """
+    anchor = _period_anchor(d)
+    period = (getattr(settings, "DIY_PERIOD", "day") or "day").lower()
+    if period == "week":
+        return anchor, anchor + timedelta(days=7)
+    return anchor, anchor + timedelta(days=1)
+
 
 def _recent_window_start(anchor: date) -> date:
     """
@@ -1139,10 +1171,35 @@ def _reseed_for_date(date_val, request=None, desired_count=None):
         .distinct()
     )
 
+    last_week_ids = set()
+    if getattr(settings, "DIY_NO_CONSECUTIVE_WEEKS", True):
+        last_anchor = _last_period_anchor(anchor)
+        last_week_ids = set(
+            DIYDailySelection.objects
+            .filter(date=last_anchor)
+            .values_list("tutorial_id", flat=True)
+        )
+
     base_qs = pool.tutorials.filter(is_active=True)
-    candidates_excl = list(base_qs.exclude(id__in=recent_ids).order_by("id").values_list("id", flat=True))
-    candidates_all  = list(base_qs.order_by("id").values_list("id", flat=True))
-    ids = candidates_excl if candidates_excl else candidates_all
+
+    strict_exclusions = recent_ids.union(last_week_ids)
+    candidates_strict = list(
+        base_qs.exclude(id__in=strict_exclusions)
+               .order_by("id")
+               .values_list("id", flat=True)
+    )
+
+    if (not candidates_strict or len(candidates_strict) < desired_count) and \
+       getattr(settings, "DIY_SOFT_NO_REPEAT_WHEN_POOL_SMALL", True):
+        candidates_relaxed = list(
+            base_qs.exclude(id__in=last_week_ids)
+                   .order_by("id")
+                   .values_list("id", flat=True)
+        )
+        ids = candidates_relaxed if candidates_relaxed else list(base_qs.order_by("id").values_list("id", flat=True))
+    else:
+        ids = candidates_strict if candidates_strict else list(base_qs.order_by("id").values_list("id", flat=True))
+
     if not ids:
         return
 
@@ -1157,7 +1214,7 @@ def _reseed_for_date(date_val, request=None, desired_count=None):
         if tid not in picked and tid not in picked_ids_now:
             picked.append(tid)
         i += 1
-
+    candidates_all = list(base_qs.order_by("id").values_list("id", flat=True))
     if len(picked) < desired_count:
         for tid in candidates_all:
             if len(picked) >= desired_count:
@@ -1319,6 +1376,11 @@ def youtube_meta(request):
 @permission_classes([permissions.AllowAny])
 def diy_daily(request):
     return api_diy_daily(request)
+
+def _last_period_anchor(anchor: date) -> date:
+    """Return the previous period’s anchor (e.g., last week’s start)."""
+    # move one day back and snap to the period anchor
+    return _period_anchor(anchor - timedelta(days=1))
 
 
 @require_POST
@@ -1642,27 +1704,32 @@ class DIYSubmitView(views.APIView):
         tutorial = get_object_or_404(DIYTutorial, pk=ser.validated_data["tutorial_id"])
 
         # 1) Enforce cooldown: block if user submitted this DIY within N days
-        cutoff = _cooldown_cutoff()
-        if DIYSubmission.objects.filter(
-            user=user, tutorial=tutorial, created_at__date__gte=cutoff
-        ).exists():
+       # 1) Must be in THIS period's selection
+        anchor = _period_anchor(today_ph())
+        in_this_period = DIYDailySelection.objects.filter(date=anchor, tutorial=tutorial).exists()
+        if not in_this_period:
+            return Response(
+                {"success": False, "error": "This DIY is not in this period’s selection."},
+                status=400,
+            )
+
+        # 2) Per-period guard: user can submit this tutorial only once per period
+        start_d, end_d = _period_window(today_ph())
+        already = DIYSubmission.objects.filter(
+            user=user,
+            tutorial=tutorial,
+            created_at__date__gte=start_d,
+            created_at__date__lt=end_d,
+        ).exists()
+        if already:
             return Response(
                 {
                     "success": False,
-                    "error": f"You’ve already submitted this DIY recently. Try again after {_cooldown_days()} days.",
-                    "cooldown_days": _cooldown_days(),
+                    "error": "You’ve already submitted this DIY for this period. You can submit again when it appears in a future period.",
                 },
                 status=400,
             )
 
-        # 2) Enforce "must be in this week's rotation" to re-submit
-        anchor = _period_anchor(today_ph())
-        in_this_week = DIYDailySelection.objects.filter(date=anchor, tutorial=tutorial).exists()
-        if not in_this_week:
-            return Response(
-                {"success": False, "error": "This DIY is not in this week’s selection."},
-                status=400,
-            )
 
         # 3) (Optional safety) if they submitted a long time ago (beyond cooldown),
         #    allow again (we do, since the check above passed).

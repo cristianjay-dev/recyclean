@@ -193,12 +193,23 @@ DIY_ADMIN_BYPASS = os.getenv("DIY_ADMIN_BYPASS", "false").lower() == "true"
 # -----------------------------------------------------------------------------
 # DIY rotation (weekly 3 videos)
 # -----------------------------------------------------------------------------
-DIY_PERIOD = os.getenv("DIY_PERIOD", "week")         # "day" or "week"
-DIY_DAILY_COUNT = int(os.getenv("DIY_DAILY_COUNT", "3"))   # count per period (3 per week)
+DIY_PERIOD = os.getenv("DIY_PERIOD", "week")                # "day" or "week"
+DIY_DAILY_COUNT = int(os.getenv("DIY_DAILY_COUNT", "3"))    # items per period
+
+# No-repeat window (in weeks) used for variety. This can be >2 if you want
+# broader variety. We'll still *always* block last week via DIY_NO_CONSECUTIVE_WEEKS.
 DIY_NO_REPEAT_WEEKS = int(os.getenv("DIY_NO_REPEAT_WEEKS", "4"))
-DIY_WEEK_START = int(os.getenv("DIY_WEEK_START", "0"))     # 0=Mon … 6=Sun
+
+# Start of week (0=Mon … 6=Sun) and rotation salt for round-robin start
+DIY_WEEK_START = int(os.getenv("DIY_WEEK_START", "0"))
 DIY_ROTATION_SALT = int(os.getenv("DIY_ROTATION_SALT", "0"))
-DIY_USER_COOLDOWN_DAYS = 90
+
+# NEW: Hard rule — never repeat an item in consecutive weeks.
+DIY_NO_CONSECUTIVE_WEEKS = os.getenv("DIY_NO_CONSECUTIVE_WEEKS", "true").lower() == "true"
+
+# NEW: If the pool is too small to fill the week strictly honoring DIY_NO_REPEAT_WEEKS,
+# we relax the wider window *but still* keep DIY_NO_CONSECUTIVE_WEEKS enforced.
+DIY_SOFT_NO_REPEAT_WHEN_POOL_SMALL = os.getenv("DIY_SOFT_NO_REPEAT_WHEN_POOL_SMALL", "true").lower() == "true"
 
 
 # ---- YOLO segmentation config ----
