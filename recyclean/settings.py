@@ -230,3 +230,19 @@ AREA_PROMOTE_LARGE_FRAC = 0.12
 
 # Optional: fail fast if missing
 assert (YOLO_SEG_WEIGHTS).exists(), f"Missing weights at {YOLO_SEG_WEIGHTS}"
+
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://redis:6379/1")
+CELERY_TIMEZONE = TIME_ZONE  # "Asia/Manila"
+CELERY_ENABLE_UTC = False    # we already use local TZ in Django
+
+from celery.schedules import crontab
+
+# Option A (recommended): run **monthly** on the 1st at 03:15 PH time; still deletes >365-day-old images.
+CELERY_BEAT_SCHEDULE = {
+    "cleanup-diy-images-monthly": {
+        "task": "dashboard.tasks.cleanup_diy_images_task",
+        "schedule": crontab(minute=15, hour=3, day_of_month="1"),  # every 1st of month 03:15
+        "args": (),  # we pass defaults in the task
+    },
+}

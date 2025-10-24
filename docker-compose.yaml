@@ -8,13 +8,21 @@ services:
       - .env.local
     ports:
       - "5432:5432"
-    networks:
-      - recyclean-net
+    networks: [recyclean-net]
     healthcheck:
-      # Uses envs from .env.local inside the container
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -h 127.0.0.1 || exit 1"]
       interval: 5s
       timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [recyclean-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
       retries: 20
 
   web:
@@ -25,16 +33,82 @@ services:
                 python manage.py runserver 0.0.0.0:8000"
     volumes:
       - .:/app
+      - media_data:/app/media        # (optional) persist user uploads outside the image
     ports:
       - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file:
       - .env.local
-    networks:
-      - recyclean-net
+    environment:
+      # ensure Celery points to the in-cluster Redis by default
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      PYTHONUNBUFFERED: "1"
+    networks: [recyclean-net]
     restart: unless-stopped
+
+  celery-worker:
+    build: .
+    working_dir: /app
+    command: bash -lc "celery -A recyclean worker -l INFO"
+    volumes:
+      - .:/app
+      - media_data:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env.local
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      CELERY_TIMEZONE: Asia/Manila
+      CELERY_ENABLE_UTC: "0"
+      PYTHONUNBUFFERED: "1"
+    networks: [recyclean-net]
+    restart: unless-stopped
+
+  celery-beat:
+    build: .
+    working_dir: /app
+    # persist the beat schedule in a small volume so restarts don't forget due times
+    command: bash -lc "celery -A recyclean beat -l INFO --schedule /data/celerybeat-schedule"
+    volumes:
+      - .:/app
+      - beat_schedule:/data
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env.local
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      CELERY_TIMEZONE: Asia/Manila
+      CELERY_ENABLE_UTC: "0"
+      PYTHONUNBUFFERED: "1"
+    networks: [recyclean-net]
+    restart: unless-stopped
+
+  # (optional) Celery web monitor
+  # flower:
+  #   image: mher/flower:latest
+  #   command: ["flower", "--broker=redis://redis:6379/0", "--port=5555"]
+  #   depends_on:
+  #     redis:
+  #       condition: service_healthy
+  #   ports:
+  #     - "5555:5555"
+  #   networks: [recyclean-net]
+  #   restart: unless-stopped
 
 networks:
   recyclean-net:
@@ -42,3 +116,5 @@ networks:
 
 volumes:
   postgres_data:
+  media_data:
+  beat_schedule:
