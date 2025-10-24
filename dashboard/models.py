@@ -403,13 +403,13 @@ class DIYSubmission(models.Model):
     """User’s optional photo proof for a DIY; awards points once."""
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="diy_submissions")
     tutorial = models.ForeignKey(DIYTutorial, on_delete=models.CASCADE, related_name="user_submissions")
-    image = models.ImageField(upload_to="diy_submissions/")
+    image = models.ImageField(upload_to="diy_submissions/", null=True, blank=True)
     caption = models.CharField(max_length=280, blank=True)
     is_public = models.BooleanField(default=True)
     approved = models.BooleanField(default=True)
     points_awarded = models.PositiveIntegerField(default=0)
     awarded_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
         db_table = "diy_submissions"

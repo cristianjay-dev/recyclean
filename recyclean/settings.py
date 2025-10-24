@@ -211,6 +211,10 @@ DIY_NO_CONSECUTIVE_WEEKS = os.getenv("DIY_NO_CONSECUTIVE_WEEKS", "true").lower()
 # we relax the wider window *but still* keep DIY_NO_CONSECUTIVE_WEEKS enforced.
 DIY_SOFT_NO_REPEAT_WHEN_POOL_SMALL = os.getenv("DIY_SOFT_NO_REPEAT_WHEN_POOL_SMALL", "true").lower() == "true"
 
+# DIY image retention / cleanup
+DIY_IMAGE_RETENTION_DAYS = int(os.getenv("DIY_IMAGE_RETENTION_DAYS", "365"))
+DIY_IMAGE_CLEANUP_BATCH  = int(os.getenv("DIY_IMAGE_CLEANUP_BATCH", "500"))
+
 
 # ---- YOLO segmentation config ----
 YOLO_SEG_WEIGHTS = BASE_DIR / "ml" / "yolo" / "bottle" / "best.pt"

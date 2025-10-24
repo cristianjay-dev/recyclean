@@ -46,6 +46,8 @@ from rest_framework.response import Response
 from urllib.parse import urlparse, parse_qs
 from decimal import Decimal, ROUND_HALF_UP
 
+from dashboard.utils.utils_images import shrink_image_upload
+
 from .forms import DIYTutorialForm
 from .models import (
     Barangay,
@@ -668,6 +670,18 @@ class DIYSubmitSerializer(serializers.Serializer):
     image = serializers.ImageField()
     caption = serializers.CharField(required=False, allow_blank=True)
     is_public = serializers.BooleanField(required=False, default=True)
+    
+    def validate_image(self, img):
+        max_mb = 8
+        if img.size and img.size > max_mb * 1024 * 1024:
+            raise serializers.ValidationError(f"Image too large (>{max_mb}MB).")
+        try:
+            im = Image.open(img)
+            im.verify()  # quick integrity check
+        except Exception:
+            raise serializers.ValidationError("Invalid image file.")
+        img.seek(0)
+        return img
 
 
 # ==============================================================================
@@ -1703,8 +1717,7 @@ class DIYSubmitView(views.APIView):
         user: User = request.user
         tutorial = get_object_or_404(DIYTutorial, pk=ser.validated_data["tutorial_id"])
 
-        # 1) Enforce cooldown: block if user submitted this DIY within N days
-       # 1) Must be in THIS period's selection
+        # Must be in THIS period's selection
         anchor = _period_anchor(today_ph())
         in_this_period = DIYDailySelection.objects.filter(date=anchor, tutorial=tutorial).exists()
         if not in_this_period:
@@ -1713,7 +1726,7 @@ class DIYSubmitView(views.APIView):
                 status=400,
             )
 
-        # 2) Per-period guard: user can submit this tutorial only once per period
+        # Per-period guard: one submission per period per tutorial
         start_d, end_d = _period_window(today_ph())
         already = DIYSubmission.objects.filter(
             user=user,
@@ -1730,21 +1743,23 @@ class DIYSubmitView(views.APIView):
                 status=400,
             )
 
+        # Resize/compress/strip EXIF
+        img = ser.validated_data["image"]
+        new_name, processed = shrink_image_upload(img, max_side=1600, webp_quality=82, to_format="WEBP")
 
-        # 3) (Optional safety) if they submitted a long time ago (beyond cooldown),
-        #    allow again (we do, since the check above passed).
-
+        # Create once, save processed image, award points once
         with transaction.atomic():
             sub = DIYSubmission.objects.create(
                 user=user,
                 tutorial=tutorial,
-                image=ser.validated_data["image"],
+                image=None,  # set after save
                 caption=ser.validated_data.get("caption") or "",
                 is_public=ser.validated_data.get("is_public", True),
                 approved=True,
                 points_awarded=tutorial.points_on_submit or 0,
                 awarded_at=timezone.now() if (tutorial.points_on_submit or 0) > 0 else None,
             )
+            sub.image.save(new_name, processed, save=True)
 
             if sub.points_awarded > 0:
                 user.total_points += sub.points_awarded
@@ -1759,6 +1774,7 @@ class DIYSubmitView(views.APIView):
                 )
 
         return Response({"success": True, "points_awarded": sub.points_awarded, "balance": user.total_points}, status=201)
+
 
 
 # ==============================================================================
