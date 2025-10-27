@@ -240,9 +240,9 @@ from celery.schedules import crontab
 
 # Option A (recommended): run **monthly** on the 1st at 03:15 PH time; still deletes >365-day-old images.
 CELERY_BEAT_SCHEDULE = {
-    "cleanup-diy-images-monthly": {
+    "cleanup-diy-images-yearly": {
         "task": "dashboard.tasks.cleanup_diy_images_task",
-        "schedule": crontab(minute=15, hour=3, day_of_month="1"),  # every 1st of month 03:15
-        "args": (),  # we pass defaults in the task
+        "schedule": crontab(minute=15, hour=3, day_of_month="1", month_of_year="1"),
+        "args": (),
     },
 }

@@ -12,7 +12,7 @@ import re
 from datetime import datetime, timedelta, date
 from functools import wraps
 from typing import List, Dict, Tuple
-from collections import Counter
+from collections import Counter, defaultdict
 from ultralytics import YOLO
 import torch
 from threading import Lock
