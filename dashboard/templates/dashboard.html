@@ -1,42 +1,153 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h1 class="text-3xl font-semibold mb-4">Dashboard</h1>
+<h1 class="text-3xl font-semibold mb-6">Dashboard</h1>
 
-<div class="grid grid-cols-3 gap-4">
-  <div class="bg-white shadow rounded-lg p-4">
-    <p class="text-gray-600">Total Users</p>
-    <p class="text-2xl font-bold">{{ total_users }}</p>
+<!-- KPI cards -->
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+  <!-- Total Users -->
+  <div class="bg-white shadow rounded-xl p-5">
+    <div class="text-gray-500 text-sm">Total Users</div>
+    <div class="mt-1 text-3xl font-bold">{{ total_users }}</div>
   </div>
-  <div class="bg-white shadow rounded-lg p-4">
-    <p class="text-gray-600">Total Submissions</p>
-    <p class="text-2xl font-bold">{{ total_submissions }}</p>
-  </div>
-  <div class="bg-white shadow rounded-lg p-4">
-    <p class="text-gray-600">Reward Requests</p>
-    <p class="text-2xl font-bold">{{ total_rewards }}</p>
-  </div>
-</div>
 
-<!-- Reloadly Wallet Section -->
-<div class="mt-8">
-  <div class="bg-white shadow rounded-lg p-6">
-    <h2 class="text-xl font-semibold mb-2">Reloadly Wallet</h2>
+  <!-- Total Bottles (small/large) -->
+  <div class="bg-white shadow rounded-xl p-5">
+    <div class="text-gray-500 text-sm">Total Plastic Bottles</div>
+    <div class="mt-1 text-3xl font-bold">{{ total_bottles }}</div>
+    <div class="mt-2 text-xs text-gray-500">Small: {{ total_bottles_small }} • Large: {{ total_bottles_large }}</div>
+  </div>
 
-    {% if reloadly_balance is not None %}
-      <p class="text-gray-700">
-        <strong>Balance:</strong>
-        {% if reloadly_currency_symbol %}{{ reloadly_currency_symbol }}{% else %}₱{% endif %}{{ reloadly_balance }}
-        {% if reloadly_currency_code %}
-          <span class="text-xs text-gray-500">({{ reloadly_currency_code }})</span>
-        {% endif %}
-      </p>
+  <!-- Total Submissions -->
+  <div class="bg-white shadow rounded-xl p-5">
+    <div class="text-gray-500 text-sm">Total Submissions</div>
+    <div class="mt-1 text-3xl font-bold">{{ total_submissions }}</div>
+  </div>
+
+  <!-- Reloadly Wallet -->
+  <div class="bg-white shadow rounded-xl p-5">
+    <div class="flex items-center justify-between">
+      <div class="text-gray-500 text-sm">Reloadly Wallet</div>
       {% if reloadly_updated_at %}
-        <p class="text-xs text-gray-500 mt-1">Updated: {{ reloadly_updated_at }}</p>
+      <div class="text-[10px] text-gray-400">Updated: {{ reloadly_updated_at }}</div>
       {% endif %}
+    </div>
+    {% if reloadly_balance is not None %}
+      <div class="mt-1 text-3xl font-bold">
+        {% if reloadly_currency_symbol %}{{ reloadly_currency_symbol }}{% else %}₱{% endif %}{{ reloadly_balance }}
+        <span class="text-sm text-gray-400">{{ reloadly_currency_code }}</span>
+      </div>
     {% else %}
-      <p class="text-red-500">Unable to fetch Reloadly balance.</p>
+      <div class="mt-1 text-red-500 font-medium">Unable to fetch balance</div>
+      {% if reloadly_error %}<div class="mt-1 text-xs text-gray-400">{{ reloadly_error }}</div>{% endif %}
     {% endif %}
   </div>
 </div>
+
+<!-- Charts -->
+<!-- Charts -->
+<div class="mt-8 grid grid-cols-1 xl:grid-cols-2 gap-6">
+  <!-- Users chart -->
+  <div class="bg-white shadow rounded-xl p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-semibold">User Sign-ups</h2>
+      <select id="users-range" class="border rounded-md text-sm px-2 py-1">
+        <option value="week" selected>Week</option>
+        <option value="month">Month</option>
+        <option value="year">Year</option>
+      </select>
+    </div>
+    <canvas id="usersChart" height="120"></canvas>
+  </div>
+
+  <!-- Submissions chart -->
+  <div class="bg-white shadow rounded-xl p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-semibold">Submissions</h2>
+      <select id="subs-range" class="border rounded-md text-sm px-2 py-1">
+        <option value="week" selected>Week</option>
+        <option value="month">Month</option>
+        <option value="year">Year</option>
+      </select>
+    </div>
+    <canvas id="subsChart" height="120"></canvas>
+  </div>
+
+  <!-- Bottle size pie -->
+  <div class="bg-white shadow rounded-xl p-6 xl:col-span-2">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-semibold">Bottle Size Mix (All-time)</h2>
+    </div>
+    <canvas id="pieChart" height="180"></canvas>
+  </div>
+</div>
+
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  // Incoming data
+  const userWeekLabels  = {{ user_week_labels|safe }};
+  const userWeekValues  = {{ user_week_values|safe }};
+  const userMonthLabels = {{ user_month_labels|safe }};
+  const userMonthValues = {{ user_month_values|safe }};
+  const userYearLabels  = {{ user_year_labels|safe }};
+  const userYearValues  = {{ user_year_values|safe }};
+
+  const subWeekLabels   = {{ sub_week_labels|safe }};
+  const subWeekValues   = {{ sub_week_values|safe }};
+  const subMonthLabels  = {{ sub_month_labels|safe }};
+  const subMonthValues  = {{ sub_month_values|safe }};
+  const subYearLabels   = {{ sub_year_labels|safe }};
+  const subYearValues   = {{ sub_year_values|safe }};
+
+  const pieLabels       = {{ pie_labels|safe }};
+  const pieValues       = {{ pie_values|safe }};
+
+  const baseLineOpts = {
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+    plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } }
+  };
+
+  const usersCtx = document.getElementById('usersChart').getContext('2d');
+  const usersChart = new Chart(usersCtx, {
+    type: 'bar',
+    data: { labels: userWeekLabels, datasets: [{ label: 'Sign-ups', data: userWeekValues }] },
+    options: baseLineOpts
+  });
+
+  const subsCtx = document.getElementById('subsChart').getContext('2d');
+  const subsChart = new Chart(subsCtx, {
+    type: 'bar',
+    data: { labels: subWeekLabels, datasets: [{ label: 'Submissions', data: subWeekValues }] },
+    options: baseLineOpts
+  });
+
+  const pieCtx = document.getElementById('pieChart').getContext('2d');
+  const pieChart = new Chart(pieCtx, {
+    type: 'doughnut',
+    data: { labels: pieLabels, datasets: [{ label: 'Bottles', data: pieValues }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+  });
+
+  // Range toggles
+  document.getElementById('users-range').addEventListener('change', (e) => {
+    const v = e.target.value;
+    if (v === 'week') { usersChart.data.labels = userWeekLabels; usersChart.data.datasets[0].data = userWeekValues; }
+    else if (v === 'month') { usersChart.data.labels = userMonthLabels; usersChart.data.datasets[0].data = userMonthValues; }
+    else { usersChart.data.labels = userYearLabels; usersChart.data.datasets[0].data = userYearValues; }
+    usersChart.update();
+  });
+
+  document.getElementById('subs-range').addEventListener('change', (e) => {
+    const v = e.target.value;
+    if (v === 'week') { subsChart.data.labels = subWeekLabels; subsChart.data.datasets[0].data = subWeekValues; }
+    else if (v === 'month') { subsChart.data.labels = subMonthLabels; subsChart.data.datasets[0].data = subMonthValues; }
+    else { subsChart.data.labels = subYearLabels; subsChart.data.datasets[0].data = subYearValues; }
+    subsChart.update();
+  });
+</script>
+
 {% endblock %}

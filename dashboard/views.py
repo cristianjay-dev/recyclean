@@ -12,7 +12,7 @@ import re
 from datetime import datetime, timedelta, date
 from functools import wraps
 from typing import List, Dict, Tuple
-from collections import Counter
+from collections import Counter, defaultdict
 from ultralytics import YOLO
 import torch
 from threading import Lock
@@ -687,8 +687,11 @@ class DIYSubmitSerializer(serializers.Serializer):
 # ==============================================================================
 # Dashboard & Reward Requests (server-rendered)
 # ==============================================================================
+
+
 @require_admin_page
 def dashboard(request):
+    # ---- Reloadly wallet (keep your current logic) ----
     reloadly_balance = None
     reloadly_currency_code = "PHP"
     reloadly_currency_symbol = "₱"
@@ -706,51 +709,148 @@ def dashboard(request):
         reloadly_error = f"Unable to fetch Reloadly balance: {e}"
         LOGGER.warning(reloadly_error)
 
+    # ---- Totals (all-time) ----------------------------------------------------
+    total_users = User.objects.count()
+    all_submissions_qs = Submission.objects.all().only("bottle_data", "staff_id", "created_at")
+
+    # bottle totals (all-time, small/large)
+    total_small = total_large = 0
+    for bdata in all_submissions_qs.values_list("bottle_data", flat=True):
+        for b in (bdata or []):
+            size = (b.get("size") or "").lower()
+            try:
+                cnt = int(b.get("count") or b.get("quantity") or 0)
+            except Exception:
+                cnt = 0
+            if size == "small":
+                total_small += cnt
+            elif size == "large":
+                total_large += cnt
+    total_bottles = total_small + total_large
+    total_submissions = all_submissions_qs.count()
+
+    # ---- Helper: build time-series counts for a queryset of datetimes --------
+    def _series_from_datetimes(datetimes_qs, labels, mode: str):
+        """
+        mode: 'year' uses YYYY-MM buckets; otherwise uses YYYY-MM-DD daily buckets.
+        """
+        c = Counter()
+        for dt in datetimes_qs:
+            d = localtime(dt).date()
+            key = f"{d.year}-{d.month:02d}" if mode == "year" else d.strftime("%Y-%m-%d")
+            c[key] += 1
+        return [int(c.get(lbl, 0)) for lbl in labels]
+
+    # ---- Users: week / month / year series -----------------------------------
+    # week
+    uw_start, uw_end, uw_key, uw_labels = _period_bounds("week")
+    user_week_vals = _series_from_datetimes(
+        User.objects.filter(date_joined__date__gte=uw_start, date_joined__date__lt=uw_end)
+            .values_list("date_joined", flat=True),
+        uw_labels, uw_key
+    )
+    # month
+    um_start, um_end, um_key, um_labels = _period_bounds("month")
+    user_month_vals = _series_from_datetimes(
+        User.objects.filter(date_joined__date__gte=um_start, date_joined__date__lt=um_end)
+            .values_list("date_joined", flat=True),
+        um_labels, um_key
+    )
+    # year
+    uy_start, uy_end, uy_key, uy_labels = _period_bounds("year")
+    user_year_vals = _series_from_datetimes(
+        User.objects.filter(date_joined__date__gte=uy_start, date_joined__date__lt=uy_end)
+            .values_list("date_joined", flat=True),
+        uy_labels, uy_key
+    )
+
+    # ---- Submissions: week / month / year series ------------------------------
+    sw_start, sw_end, sw_key, sw_labels = _period_bounds("week")
+    sub_week_vals = _series_from_datetimes(
+        Submission.objects.filter(created_at__date__gte=sw_start, created_at__date__lt=sw_end)
+            .values_list("created_at", flat=True),
+        sw_labels, sw_key
+    )
+
+    sm_start, sm_end, sm_key, sm_labels = _period_bounds("month")
+    sub_month_vals = _series_from_datetimes(
+        Submission.objects.filter(created_at__date__gte=sm_start, created_at__date__lt=sm_end)
+            .values_list("created_at", flat=True),
+        sm_labels, sm_key
+    )
+
+    sy_start, sy_end, sy_key, sy_labels = _period_bounds("year")
+    sub_year_vals = _series_from_datetimes(
+        Submission.objects.filter(created_at__date__gte=sy_start, created_at__date__lt=sy_end)
+            .values_list("created_at", flat=True),
+        sy_labels, sy_key
+    )
+
+    # ---- Staff leaderboard (top 10 by bottles, all-time) ---------------------
+    staff_totals = defaultdict(int)  # staff_id -> total bottles
+    for staff_id, bdata in all_submissions_qs.values_list("staff_id", "bottle_data"):
+        if not staff_id:
+            continue
+        s = l = 0
+        for b in (bdata or []):
+            size = (b.get("size") or "").lower()
+            try:
+                cnt = int(b.get("count") or b.get("quantity") or 0)
+            except Exception:
+                cnt = 0
+            if size == "small": s += cnt
+            elif size == "large": l += cnt
+        staff_totals[staff_id] += (s + l)
+
+    # fetch names and build arrays
+    staff_ids_sorted = sorted(staff_totals.keys(), key=lambda i: staff_totals[i], reverse=True)[:10]
+    id_to_user = {u.id: u for u in User.objects.filter(id__in=staff_ids_sorted)}
+    staff_labels = []
+    staff_values = []
+    for sid in staff_ids_sorted:
+        u = id_to_user.get(sid)
+        label = (u.get_full_name() or u.username) if u else f"Staff {sid}"
+        staff_labels.append(label)
+        staff_values.append(int(staff_totals[sid]))
+
+    # ---- Context for template (pre-JSON-dumped where used in JS) -------------
     context = {
-        "total_users": User.objects.count(),
-        "total_submissions": Submission.objects.count(),
-        "total_rewards": RewardRequest.objects.count(),
+        # KPI cards
+        "total_users": total_users,
+        "total_bottles": total_bottles,
+        "total_bottles_small": total_small,
+        "total_bottles_large": total_large,
+        "total_submissions": total_submissions,
+
+        # Reloadly
         "reloadly_balance": reloadly_balance,
         "reloadly_currency": reloadly_currency_code,
         "reloadly_currency_code": reloadly_currency_code,
         "reloadly_currency_symbol": reloadly_currency_symbol,
         "reloadly_error": reloadly_error,
         "reloadly_updated_at": reloadly_updated_at,
+
+        # Users chart data
+        "user_week_labels": json.dumps(uw_labels),
+        "user_week_values": json.dumps(user_week_vals),
+        "user_month_labels": json.dumps(um_labels),
+        "user_month_values": json.dumps(user_month_vals),
+        "user_year_labels": json.dumps(uy_labels),
+        "user_year_values": json.dumps(user_year_vals),
+
+        # Submissions chart data
+        "sub_week_labels": json.dumps(sw_labels),
+        "sub_week_values": json.dumps(sub_week_vals),
+        "sub_month_labels": json.dumps(sm_labels),
+        "sub_month_values": json.dumps(sub_month_vals),
+        "sub_year_labels": json.dumps(sy_labels),
+        "sub_year_values": json.dumps(sub_year_vals),
+
+        # Bottle size pie (all-time)
+        "pie_labels": json.dumps(["Small", "Large"]),
+        "pie_values": json.dumps([int(total_small), int(total_large)]),
     }
     return render(request, "dashboard.html", context)
-
-@require_admin_page
-def reward_requests_view(request):
-    reward_requests = RewardRequest.objects.select_related("user").order_by("-id")
-    reloadly_balance = None
-    reloadly_currency = "PHP"
-    reloadly_error = None
-    reloadly_txns = []
-    try:
-        bal = get_reloadly_balance()
-        if isinstance(bal, dict):
-            reloadly_balance = bal.get("balance") or bal.get("availableBalance") or bal.get("amount")
-            reloadly_currency = bal.get("currencyCode") or bal.get("currency") or "PHP"
-        else:
-            reloadly_balance = bal
-    except Exception as e:
-        reloadly_error = f"Unable to fetch Reloadly balance: {e}"
-    try:
-        tx = list_reloadly_transactions(page=1, size=20)
-        reloadly_txns = (tx.get("content") or tx.get("data") or tx.get("transactions") or tx.get("items") or []) if isinstance(tx, dict) else (tx or [])
-    except Exception as e:
-        reloadly_error = (reloadly_error + f" | Txns error: {e}") if reloadly_error else f"Txns error: {e}"
-
-    context = {
-        "reward_requests": reward_requests,
-        "total_rewards": RewardRequest.objects.count(),
-        "reloadly_balance": reloadly_balance,
-        "reloadly_currency": reloadly_currency,
-        "reloadly_error": reloadly_error,
-        "reloadly_txns": reloadly_txns,
-    }
-    return render(request, "reward_requests.html", context)
-
 
 # Public API to normalize PH numbers for clients
 @api_view(["GET"])
