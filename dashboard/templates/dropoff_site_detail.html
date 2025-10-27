@@ -1,226 +1,312 @@
 {% extends "base.html" %}
 {% block content %}
 
-<div class="flex items-center justify-between mb-4">
-  <div>
-    <h1 class="text-2xl font-bold">
-      {{ site.barangay.name|default:site.barangay }} • Drop-off Site
-    </h1>
-    <p class="text-sm text-gray-600 mt-1">
-      <span class="font-semibold">{{ staff_members|length }}</span> staff
-      {% if staff_members %}
-        —
-        {% for s in staff_members %}
-          <span class="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1">
-            {{ s.get_full_name|default:s.username }}
-          </span>
-        {% endfor %}
-      {% else %}
-        <span class="italic text-gray-500">No staff assigned.</span>
-      {% endif %}
-    </p>
-  </div>
+<!-- Header -->
+<div class="mb-8">
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-4xl font-bold tracking-tight text-gray-900">
+        {{ site.barangay.name|default:site.barangay }} • Drop-off Site
+      </h1>
+      <p class="mt-2 text-md text-gray-600">
+        <span class="font-semibold">{{ staff_members|length }}</span> staff
+        {% if staff_members %}
+          <span class="mx-2 text-gray-300">•</span>
+          {% for s in staff_members %}
+            <span class="inline-flex items-center px-2 py-1 text-sm bg-gray-50 ring-1 ring-gray-200 rounded-lg mr-1">
+              {{ s.get_full_name|default:s.username }}
+            </span>
+          {% endfor %}
+        {% else %}
+          <span class="italic text-gray-500">No staff assigned.</span>
+        {% endif %}
+      </p>
+    </div>
 
-  <!-- Export CSV with date range -->
-  <form onsubmit="return exportCSV();" class="flex items-center gap-2">
-    <input type="date" id="exp_from" class="border rounded px-2 py-2">
-    <input type="date" id="exp_to" class="border rounded px-2 py-2">
-    <button class="bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700">
-      Export CSV
-    </button>
-  </form>
+    <!-- Export with date range -->
+    <form onsubmit="return exportCSV();" class="flex items-center gap-3 bg-white/80 backdrop-blur rounded-xl shadow-sm ring-1 ring-gray-200 px-3 py-2">
+      <div class="flex items-center gap-2">
+        <label for="exp_from" class="text-sm text-gray-600">From</label>
+        <input type="date" id="exp_from" class="rounded-lg border-gray-300 bg-white py-2 px-3 text-sm focus:border-emerald-500 focus:ring-emerald-500">
+      </div>
+      <div class="flex items-center gap-2">
+        <label for="exp_to" class="text-sm text-gray-600">To</label>
+        <input type="date" id="exp_to" class="rounded-lg border-gray-300 bg-white py-2 px-3 text-sm focus:border-emerald-500 focus:ring-emerald-500">
+      </div>
+      <button class="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-white text-sm font-medium shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+        <svg class="h-4 w-4 text-white/90" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 3a1 1 0 0 1 1 1v8.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42L11 12.6V4a1 1 0 0 1 1-1ZM4 20a1 1 0 0 1 1-1h14a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Z"/>
+        </svg>
+        Export CSV
+      </button>
+    </form>
+  </div>
 </div>
 
-<!-- Period selector + quick export presets -->
-<div class="flex items-center gap-2 mb-4">
+<!-- Period selector + quick export -->
+<div class="mb-8 flex items-center flex-wrap gap-3">
   {% with current=period|default:"week" %}
-    <a href="?period=week"
-       class="px-3 py-1 rounded border {% if current == 'week' %}bg-blue-600 text-white{% else %}bg-white text-gray-700{% endif %}">
-      Week
-    </a>
-    <a href="?period=month"
-       class="px-3 py-1 rounded border {% if current == 'month' %}bg-blue-600 text-white{% else %}bg-white text-gray-700{% endif %}">
-      Month
-    </a>
-    <a href="?period=year"
-       class="px-3 py-1 rounded border {% if current == 'year' %}bg-blue-600 text-white{% else %}bg-white text-gray-700{% endif %}">
-      Year
-    </a>
+    <div class="inline-flex rounded-xl ring-1 ring-gray-200 bg-white shadow-sm overflow-hidden">
+      <a href="?period=week"
+         class="px-4 py-2 text-sm font-medium {% if current == 'week' %}bg-gray-900 text-white{% else %}text-gray-700 hover:bg-gray-50{% endif %}">
+        Week
+      </a>
+      <a href="?period=month"
+         class="px-4 py-2 text-sm font-medium border-l border-gray-200 {% if current == 'month' %}bg-gray-900 text-white{% else %}text-gray-700 hover:bg-gray-50{% endif %}">
+        Month
+      </a>
+      <a href="?period=year"
+         class="px-4 py-2 text-sm font-medium border-l border-gray-200 {% if current == 'year' %}bg-gray-900 text-white{% else %}text-gray-700 hover:bg-gray-50{% endif %}">
+        Year
+      </a>
+    </div>
   {% endwith %}
 
-  <span class="ml-3 text-sm text-gray-500">Quick export:</span>
-  <button class="px-3 py-1 rounded border" onclick="presetAndExport('week')">Week</button>
-  <button class="px-3 py-1 rounded border" onclick="presetAndExport('month')">Month</button>
-  <button class="px-3 py-1 rounded border" onclick="presetAndExport('year')">Year</button>
+  <div class="flex items-center gap-2 text-sm text-gray-600">
+    <span class="ml-1">Quick export:</span>
+    <button class="px-3 py-1.5 rounded-lg ring-1 ring-gray-200 bg-white hover:bg-gray-50" onclick="presetAndExport('week')">Week</button>
+    <button class="px-3 py-1.5 rounded-lg ring-1 ring-gray-200 bg-white hover:bg-gray-50" onclick="presetAndExport('month')">Month</button>
+    <button class="px-3 py-1.5 rounded-lg ring-1 ring-gray-200 bg-white hover:bg-gray-50" onclick="presetAndExport('year')">Year</button>
+  </div>
 </div>
 
-<!-- Metrics -->
-<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-  <div class="bg-white shadow rounded p-4 text-center">
-    <h2 class="text-lg font-bold">Total Submissions</h2>
-    <p class="text-3xl font-semibold text-green-600">{{ total_submissions }}</p>
+<!-- KPI cards -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+  <div class="group relative overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-gray-100">
+    <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-indigo-500 via-sky-500 to-emerald-500"></div>
+    <div class="p-6">
+      <div class="text-gray-600 text-sm font-medium">Total Submissions</div>
+      <div class="mt-2 text-4xl font-bold tracking-tight text-gray-900">{{ total_submissions }}</div>
+    </div>
   </div>
-  <div class="bg-white shadow rounded p-4 text-center">
-    <h2 class="text-lg font-bold">Total Bottles</h2>
-    <p class="text-3xl font-semibold text-blue-600">{{ total_bottles }}</p>
+  <div class="group relative overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-gray-100">
+    <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-amber-500 via-lime-500 to-emerald-500"></div>
+    <div class="p-6">
+      <div class="text-gray-600 text-sm font-medium">Total Bottles</div>
+      <div class="mt-2 text-4xl font-bold tracking-tight text-gray-900">{{ total_bottles }}</div>
+    </div>
   </div>
-  <div class="bg-white shadow rounded p-4 text-center">
-    <h2 class="text-lg font-bold">Total Points (claimed)</h2>
-    <p class="text-3xl font-semibold text-orange-500">{{ total_points }}</p>
+  <div class="group relative overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-gray-100">
+    <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-fuchsia-500 via-pink-500 to-rose-500"></div>
+    <div class="p-6">
+      <div class="text-gray-600 text-sm font-medium">Total Points (claimed)</div>
+      <div class="mt-2 text-4xl font-bold tracking-tight text-gray-900">{{ total_points }}</div>
+    </div>
   </div>
 </div>
 
 <!-- Charts -->
-<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-  <div class="bg-white shadow rounded p-4">
-    <h2 class="text-lg font-bold mb-2">
-      {% if period == 'year' %}
-        Monthly Submissions (This Year)
-      {% elif period == 'month' %}
-        Daily Submissions (This Month)
-      {% else %}
-        Daily Submissions (This Week: Mon–Sun)
-      {% endif %}
-    </h2>
-    <canvas id="activityChart"></canvas>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
+  <!-- Activity -->
+  <div class="group relative overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-gray-100">
+    <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-500 via-sky-500 to-indigo-500"></div>
+    <div class="p-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-semibold text-gray-900">
+          {% if period == 'year' %}Monthly Submissions (This Year)
+          {% elif period == 'month' %}Daily Submissions (This Month)
+          {% else %}Daily Submissions (This Week: Mon–Sun){% endif %}
+        </h2>
+      </div>
+      <div class="mt-5 h-64">
+        <canvas id="activityChart" class="w-full h-full"></canvas>
+      </div>
+    </div>
   </div>
-  <div class="bg-white shadow rounded p-4">
-    <h2 class="text-lg font-bold mb-2">Bottle Size Distribution</h2>
-    <canvas id="bottleChart"></canvas>
+
+  <!-- Bottle distribution -->
+  <div class="group relative overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-gray-100">
+    <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-amber-500 via-lime-500 to-emerald-500"></div>
+    <div class="p-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-semibold text-gray-900">Bottle Size Distribution</h2>
+      </div>
+      <div class="mt-5 h-64">
+        <canvas id="bottleChart" class="w-full h-full"></canvas>
+      </div>
+    </div>
   </div>
 </div>
 
-<!-- Submissions Table -->
-<div class="bg-white shadow rounded overflow-x-auto">
-  <table class="min-w-full border">
-    <thead class="bg-gray-200">
-      <tr>
-        <th class="px-4 py-2 border">Date</th>
-        <th class="px-4 py-2 border">Staff</th>
-        <th class="px-4 py-2 border">Resident</th>
-        <th class="px-4 py-2 border">Small</th>
-        <th class="px-4 py-2 border">Large</th>
-        <th class="px-4 py-2 border">Proposed</th>
-        <th class="px-4 py-2 border">Claimed</th>
-        <th class="px-4 py-2 border">Status</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for sub in submissions %}
-      <tr class="hover:bg-gray-100">
-        <td class="px-4 py-2 border">{{ sub.created_at|date:"Y-m-d H:i" }}</td>
-        <td class="px-4 py-2 border">
-          {% if sub.staff %}{{ sub.staff.get_full_name|default:sub.staff.username }}{% else %}—{% endif %}
-        </td>
-        <td class="px-4 py-2 border">
-          {% if sub.claimed_by %}{{ sub.claimed_by.get_full_name|default:sub.claimed_by.username }}{% else %}<span class="text-gray-500">Unclaimed</span>{% endif %}
-        </td>
-
-        {# Small #}
-        <td class="px-4 py-2 border">{{ sub.small_count|default:0 }}</td>
-
-        {# Large count #}
-        <td class="px-4 py-2 border">{{ sub.large_count|default:0 }}</td>
-
-        <td class="px-4 py-2 border">{{ sub.proposed_points|default:0 }}</td>
-        <td class="px-4 py-2 border">{{ sub.claimed_points|default:0 }}</td>
-        <td class="px-4 py-2 border capitalize">{{ sub.status }}</td>
-      </tr>
-      {% empty %}
-      <tr>
-        <td colspan="8" class="px-4 py-4 border text-center text-gray-500">
-          No submissions found for this site.
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<!-- Submissions table -->
+<div class="rounded-xl bg-white shadow-lg ring-1 ring-gray-100 overflow-hidden">
+  <div class="px-6 py-4 border-b border-gray-100">
+    <h3 class="text-lg font-semibold text-gray-900">Submissions ({{ period|capfirst }})</h3>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-gray-100">
+      <thead class="bg-gray-50">
+        <tr>
+          <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Date</th>
+          <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Staff</th>
+          <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Resident</th>
+          <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Small</th>
+          <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Large</th>
+          <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Proposed</th>
+          <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Claimed</th>
+          <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Status</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100">
+        {% for sub in submissions %}
+        <tr class="hover:bg-gray-50/70">
+          <td class="px-6 py-3 text-sm text-gray-800 whitespace-nowrap">{{ sub.created_at|date:"Y-m-d H:i" }}</td>
+          <td class="px-6 py-3 text-sm text-gray-800">
+            {% if sub.staff %}{{ sub.staff.get_full_name|default:sub.staff.username }}{% else %}—{% endif %}
+          </td>
+          <td class="px-6 py-3 text-sm text-gray-800">
+            {% if sub.claimed_by %}{{ sub.claimed_by.get_full_name|default:sub.claimed_by.username }}{% else %}<span class="text-gray-500">Unclaimed</span>{% endif %}
+          </td>
+          <td class="px-6 py-3 text-sm text-gray-800">{{ sub.small_count|default:0 }}</td>
+          <td class="px-6 py-3 text-sm text-gray-800">{{ sub.large_count|default:0 }}</td>
+          <td class="px-6 py-3 text-sm text-gray-800">{{ sub.proposed_points|default:0 }}</td>
+          <td class="px-6 py-3 text-sm text-gray-800">{{ sub.claimed_points|default:0 }}</td>
+          <td class="px-6 py-3 text-sm text-gray-800 capitalize">{{ sub.status }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="8" class="px-6 py-8 text-center text-gray-500">No submissions found for this site.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 
-<!-- Chart.js + Data Labels Plugin -->
+<!-- Charts -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels"></script>
 <script>
-  const seriesLabels = JSON.parse('{{ series_labels|escapejs }}');
-  const seriesValues = JSON.parse('{{ series_values|escapejs }}');
-  const bottleLabels = JSON.parse('{{ bottle_labels|escapejs }}');
-  const bottleValues = JSON.parse('{{ bottle_values|escapejs }}');
+  // Data
+  const seriesLabels  = JSON.parse('{{ series_labels|escapejs }}');
+  const seriesValues  = JSON.parse('{{ series_values|escapejs }}');
+  const bottleLabels  = JSON.parse('{{ bottle_labels|escapejs }}');
+  const bottleValues  = JSON.parse('{{ bottle_values|escapejs }}');
+  const totalBottles  = (bottleValues || []).reduce((a,b)=>a+(+b||0), 0) || 1;
 
-  const totalBottles = bottleValues.reduce((a, b) => a + b, 0) || 1;
+  // Global chart aesthetics
+  Chart.defaults.font.family = 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial';
+  Chart.defaults.color = '#6b7280';
 
-  // Activity Chart
-  new Chart(document.getElementById('activityChart'), {
+  function formatLabel(lbl){
+    const s = String(lbl || '');
+    const parts = s.split('-');
+    if (parts.length === 3) return parts[1] + '/' + parts[2]; // YYYY-MM-DD -> MM/DD
+    if (parts.length === 2) {
+      const m = Math.max(1, Math.min(12, parseInt(parts[1], 10))) - 1;
+      return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m];
+    }
+    return s;
+  }
+
+  const baseLineOpts = {
+    responsive: true,
+    maintainAspectRatio: false,
+    tension: 0.4,
+    cubicInterpolationMode: 'monotone',
+    elements: { point: { radius: 0, hitRadius: 10, hoverRadius: 4 } },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        mode: 'index', intersect: false,
+        backgroundColor: 'rgba(30,41,59,.95)',
+        titleFont: { size: 14, weight: 'bold' },
+        bodyFont: { size: 12 },
+        padding: 10, cornerRadius: 6
+      }
+    },
+    scales: {
+      x: {
+        grid: { display: false },
+        ticks: { autoSkip: true, maxTicksLimit: 7, color: '#6b7280',
+          callback: function(v){ return formatLabel(this.getLabelForValue(v)); } }
+      },
+      y: {
+        beginAtZero: true,
+        ticks: { precision: 0, color: '#6b7280' },
+        grid: { color: 'rgba(0,0,0,0.08)' }
+      }
+    }
+  };
+
+  // Gradients
+  function makeGradients(ctx) {
+    const h = ctx.canvas.height;
+    const gLine = ctx.createLinearGradient(0, 0, 0, h);
+    gLine.addColorStop(0, 'rgba(16,185,129,0.35)'); // emerald
+    gLine.addColorStop(1, 'rgba(16,185,129,0.05)');
+    return { fill: gLine, border: 'rgba(16,185,129,1)' };
+  }
+
+  // Activity line
+  const actCtx = document.getElementById('activityChart').getContext('2d');
+  const gA = makeGradients(actCtx);
+  new Chart(actCtx, {
     type: 'line',
     data: {
       labels: seriesLabels,
       datasets: [{
         label: 'Submissions',
         data: seriesValues,
-        borderColor: '#10B981',
-        backgroundColor: 'rgba(16, 185, 129, 0.2)',
-        fill: true,
-        tension: 0.3,
-        pointBackgroundColor: '#10B981'
+        borderColor: gA.border,
+        backgroundColor: gA.fill,
+        borderWidth: 2,
+        fill: true
       }]
     },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: (c) => `${c.raw} submissions` } }
-      },
-      scales: { y: { beginAtZero: true } }
-    }
+    options: baseLineOpts
   });
 
-  // Bottle Size Distribution Chart
-  new Chart(document.getElementById('bottleChart'), {
+  // Bottle bar (clean, modern)
+  const botCtx = document.getElementById('bottleChart').getContext('2d');
+  new Chart(botCtx, {
     type: 'bar',
     data: {
       labels: bottleLabels,
       datasets: [{
-        label: 'Quantity',
+        label: 'Bottles',
         data: bottleValues,
+        borderWidth: 0,
+        borderRadius: 8,
         backgroundColor: [
-          'rgba(59, 130, 246, 0.6)',
-          'rgba(16, 185, 129, 0.6)',
-          'rgba(245, 158, 11, 0.6)',
-          'rgba(239, 68, 68, 0.6)',
-          'rgba(99, 102, 241, 0.6)'
-        ],
-        borderColor: '#fff',
-        borderWidth: 1
+          'rgba(59,130,246,0.7)',   // blue-500
+          'rgba(16,185,129,0.7)',   // emerald-500
+          'rgba(245,158,11,0.7)',   // amber-500
+          'rgba(239,68,68,0.7)',    // red-500
+          'rgba(99,102,241,0.7)'    // indigo-500
+        ]
       }]
     },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       plugins: {
         legend: { display: false },
         tooltip: {
+          backgroundColor: 'rgba(30,41,59,.95)',
+          titleFont: { size: 14, weight: 'bold' },
+          bodyFont: { size: 12 },
+          padding: 10, cornerRadius: 6,
           callbacks: {
             label: (ctx) => {
-              const v = ctx.raw;
+              const v = +ctx.raw || 0;
               const p = ((v / totalBottles) * 100).toFixed(1);
               return `${v} bottles (${p}%)`;
             }
           }
-        },
-        datalabels: {
-          anchor: 'end',
-          align: 'top',
-          formatter: (v) => {
-            const p = ((v / totalBottles) * 100).toFixed(1);
-            return `${v} (${p}%)`;
-          },
-          font: { weight: 'bold' }
         }
       },
-      scales: { y: { beginAtZero: true } }
-    },
-    plugins: [ChartDataLabels]
+      scales: {
+        x: { grid: { display: false } },
+        y: {
+          beginAtZero: true,
+          ticks: { precision: 0 },
+          grid: { color: 'rgba(0,0,0,0.08)' }
+        }
+      }
+    }
   });
 
-  // --- CSV export helpers ---
+  // CSV helpers
   function qs(v){ return encodeURIComponent(v || ""); }
   function exportCSV(){
     const f = document.getElementById('exp_from').value;
@@ -230,29 +316,25 @@
     window.location.href = url;
     return false;
   }
-  // presets that mirror the same ranges your view uses
   function presetAndExport(kind){
     const today = new Date();
     const y = today.getFullYear();
-    const m = today.getMonth(); // 0..11
+    const m = today.getMonth();
     const d = today.getDate();
-
     let from, to;
+
     if (kind === 'week') {
-      // Monday..Sunday for the current week containing "today"
       const jsWeekday = today.getDay(); // 0=Sun..6=Sat
-      const diffToMonday = (jsWeekday + 6) % 7; // Sun->6, Mon->0, Tue->1, ...
-      from = new Date(y, m, d - diffToMonday);                 // Monday
-      to   = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 6); // Sunday
+      const diffToMonday = (jsWeekday + 6) % 7;
+      from = new Date(y, m, d - diffToMonday);
+      to   = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 6);
     } else if (kind === 'month') {
-      from = new Date(y, m, 1);             // 1st of this month
-      to   = new Date(y, m + 1, 0);         // last day of this month
+      from = new Date(y, m, 1);
+      to   = new Date(y, m + 1, 0);
     } else if (kind === 'year') {
-      from = new Date(y, 0, 1);             // Jan 1
-      to   = new Date(y, 11, 31);           // Dec 31
-    } else {
-      return;
-    }
+      from = new Date(y, 0, 1);
+      to   = new Date(y, 11, 31);
+    } else { return; }
 
     document.getElementById('exp_from').value = from.toISOString().slice(0,10);
     document.getElementById('exp_to').value   = to.toISOString().slice(0,10);

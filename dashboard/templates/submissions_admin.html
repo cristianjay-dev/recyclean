@@ -1,154 +1,212 @@
 {% extends "base.html" %}
 {% block content %}
 
-<!-- Header -->
-<div class="flex items-center justify-between mb-6">
-  <h1 class="text-2xl font-bold">Submissions</h1>
+<!-- Page header -->
+<div class="mb-8">
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-4xl font-bold tracking-tight text-gray-900">Submissions</h1>
+      <p class="mt-2 text-md text-gray-600">Manage points configuration, review drop-off sites, and export summaries.</p>
+    </div>
 
-  <!-- Export ALL sites (with optional date range) -->
-  <form onsubmit="return exportAllCSV();" class="flex items-center gap-2">
-    <input type="date" id="all_from" class="border rounded px-2 py-2" placeholder="From">
-    <input type="date" id="all_to"   class="border rounded px-2 py-2" placeholder="To">
-    <button class="bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700">
-      Export All Submissions (CSV)
-    </button>
-  </form>
+    <!-- Export ALL sites (with optional date range) -->
+    <form onsubmit="return exportAllCSV();" class="flex items-center gap-3 bg-white/80 backdrop-blur rounded-xl shadow-sm ring-1 ring-gray-200 px-3 py-2">
+      <div class="flex items-center gap-2">
+        <label for="all_from" class="text-sm text-gray-600">From</label>
+        <input type="date" id="all_from" class="rounded-lg border-gray-300 bg-white py-2 px-3 text-sm focus:border-emerald-500 focus:ring-emerald-500">
+      </div>
+      <div class="flex items-center gap-2">
+        <label for="all_to" class="text-sm text-gray-600">To</label>
+        <input type="date" id="all_to" class="rounded-lg border-gray-300 bg-white py-2 px-3 text-sm focus:border-emerald-500 focus:ring-emerald-500">
+      </div>
+      <button class="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-white text-sm font-medium shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+        <!-- download icon -->
+        <svg class="h-4 w-4 text-white/90" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 3a1 1 0 0 1 1 1v8.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42L11 12.6V4a1 1 0 0 1 1-1ZM4 20a1 1 0 0 1 1-1h14a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Z"/>
+        </svg>
+        Export All (CSV)
+      </button>
+    </form>
+  </div>
 </div>
 
 <!-- Points configuration (locked until superuser re-auth) -->
-<div class="bg-white rounded shadow p-4 mb-6">
-  <div class="flex items-center justify-between mb-3">
-    <h2 class="text-lg font-semibold">Points per Bottle</h2>
+<div class="group relative overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-gray-100 mb-8">
+  <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-indigo-500 via-sky-500 to-emerald-500"></div>
+  <div class="p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div class="flex items-center gap-2">
+        <svg class="h-5 w-5 text-indigo-600" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M6 3a2 2 0 0 0-2 2v10.59l-1.3 1.3A1 1 0 0 0 3 19h18a1 1 0 0 0 .7-1.71L20 15.59V5a2 2 0 0 0-2-2H6Zm5 7h2a1 1 0 1 1 0 2h-2a1 1 0 1 1 0-2Z"/>
+        </svg>
+        <h2 class="text-lg font-semibold text-gray-900">Points per Bottle</h2>
+      </div>
 
-    <div class="flex items-center gap-2">
-      <button
-        id="unlockBtn"
-        type="button"
-        class="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
-      >
-        🔒 Unlock editing
-      </button>
-    </div>
-  </div>
-
-  {% if points_edit_error %}
-    <div class="mb-3 rounded bg-yellow-50 text-yellow-800 text-sm px-3 py-2">
-      {{ points_edit_error }}
-    </div>
-  {% endif %}
-
-  <!-- Hidden re-auth panel -->
-  <form id="reauthForm" class="hidden mb-4 space-y-2" onsubmit="return doReauth(event)">
-    {% csrf_token %}
-    <div class="text-sm text-gray-600">
-      Enter your <strong>admin password</strong> to enable editing for 5 minutes.
-    </div>
-    <div class="flex flex-wrap gap-3">
-      <input name="password" type="password" placeholder="Admin password"
-             class="border rounded px-3 py-2 w-56" required>
-      <button class="bg-gray-900 text-white px-3 py-2 rounded hover:bg-black">
-        Verify
-      </button>
-      <button type="button" id="cancelReauth" class="px-3 py-2 rounded border border-gray-300 hover:bg-gray-50">
-        Cancel
-      </button>
-    </div>
-    <div id="reauthErr" class="hidden mt-2 text-sm text-red-600"></div>
-  </form>
-
-  <!-- Points form (disabled until unlocked) -->
-  <form id="pointsForm" method="post" action="" class="flex flex-wrap items-end gap-3 opacity-60 pointer-events-none">
-    {% csrf_token %}
-    <div>
-      <label class="block text-sm text-gray-600 mb-1">Small bottle points</label>
-      <input name="small" type="number" min="0" value="{{ cfg.small_bottle_points }}"
-             class="border rounded px-3 py-2 w-28" disabled>
-    </div>
-    <div>
-      <label class="block text-sm text-gray-600 mb-1">Large bottle points</label>
-      <input name="large" type="number" min="0" value="{{ cfg.large_bottle_points }}"
-             class="border rounded px-3 py-2 w-28" disabled>
+      <div class="flex items-center gap-2">
+        <button
+          id="unlockBtn"
+          type="button"
+          class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+        >
+          🔒 Unlock editing
+        </button>
+      </div>
     </div>
 
-    <!-- Save area with a tiny inline spinner for the Saving… state -->
-    <button id="saveBtn" class="bg-blue-600 text-white px-3 py-2 rounded inline-flex items-center gap-2" disabled>
-      <span class="save-label">Save</span>
-      <svg class="save-spinner hidden animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-      </svg>
-    </button>
-
-    {% if cfg.updated_at %}
-      <span class="text-sm text-gray-500">Last updated: {{ cfg.updated_at|date:"Y-m-d H:i" }}</span>
+    {% if points_edit_error %}
+      <div class="mb-4 rounded-lg bg-amber-50 text-amber-800 text-sm px-3 py-2 ring-1 ring-amber-100">
+        {{ points_edit_error }}
+      </div>
     {% endif %}
-  </form>
 
-  <!-- Banner shown once unlocked -->
-  <div id="unlockedBanner" class="hidden mt-3 text-sm text-green-700 bg-green-50 rounded px-3 py-2">
-    ✅ Editing unlocked for <span id="unlockTimeLeft">5:00</span>. Make your changes and click Save.
+    <!-- Hidden re-auth panel -->
+    <form id="reauthForm" class="hidden mb-4 rounded-lg bg-gray-50 px-4 py-3 ring-1 ring-gray-200" onsubmit="return doReauth(event)">
+      {% csrf_token %}
+      <div class="text-sm text-gray-700 mb-3">
+        Enter your <strong>admin password</strong> to enable editing for 5 minutes.
+      </div>
+      <div class="flex flex-wrap gap-3 items-center">
+        <input name="password" type="password" placeholder="Admin password"
+               class="rounded-lg border border-gray-300 bg-white px-3 py-2 w-64 text-sm focus:border-indigo-500 focus:ring-indigo-500" required>
+        <button class="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-white text-sm font-medium hover:bg-black focus:outline-none focus:ring-2 focus:ring-gray-700">
+          Verify
+        </button>
+        <button type="button" id="cancelReauth" class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+          Cancel
+        </button>
+      </div>
+      <div id="reauthErr" class="hidden mt-2 text-sm text-red-600"></div>
+    </form>
+
+    <!-- Points form (disabled until unlocked) -->
+    <form id="pointsForm" method="post" action="" class="flex flex-wrap items-end gap-4 opacity-60 pointer-events-none">
+      {% csrf_token %}
+      <div>
+        <label class="block text-sm text-gray-600 mb-1">Small bottle points</label>
+        <input name="small" type="number" min="0" value="{{ cfg.small_bottle_points }}"
+               class="rounded-lg border-gray-300 bg-white px-3 py-2 w-32 text-sm focus:border-indigo-500 focus:ring-indigo-500" disabled>
+      </div>
+      <div>
+        <label class="block text-sm text-gray-600 mb-1">Large bottle points</label>
+        <input name="large" type="number" min="0" value="{{ cfg.large_bottle_points }}"
+               class="rounded-lg border-gray-300 bg-white px-3 py-2 w-32 text-sm focus:border-indigo-500 focus:ring-indigo-500" disabled>
+      </div>
+
+      <!-- Save area with spinner -->
+      <button id="saveBtn" class="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-white text-sm font-medium shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500" disabled>
+        <span class="save-label">Save</span>
+        <svg class="save-spinner hidden animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+        </svg>
+      </button>
+
+      {% if cfg.updated_at %}
+        <span class="text-sm text-gray-500">Last updated: {{ cfg.updated_at|date:"Y-m-d H:i" }}</span>
+      {% endif %}
+    </form>
+
+    <!-- Unlocked banner -->
+    <div id="unlockedBanner" class="hidden mt-4 rounded-lg bg-emerald-50 text-emerald-700 text-sm px-3 py-2 ring-1 ring-emerald-100">
+      ✅ Editing unlocked for <span id="unlockTimeLeft">5:00</span>. Make your changes and click Save.
+    </div>
   </div>
 </div>
 
 <!-- Sites table -->
-<div class="bg-white rounded shadow overflow-x-auto">
-  <table class="min-w-full">
-    <thead class="bg-gray-200">
-      <tr>
-        <th class="text-left p-3">Barangay</th>
-        <th class="text-left p-3">Staff (count)</th>
-        <th class="text-left p-3">Actions</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for site in sites %}
-      <tr class="border-t hover:bg-gray-50">
-        <td class="p-3">
-          <a href="{% url 'dropoff_site_detail' site.id %}" class="text-blue-700 hover:underline">
-            {{ site.barangay.name|default:site.barangay }}
-          </a>
-        </td>
-        <td class="p-3">
-          {% with members=site.staff_members.all %}
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="inline-flex items-center text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded-full">
-                {{ members|length }} staff
-              </span>
-              {% for m in members %}
-                <span class="px-2 py-1 bg-gray-100 rounded text-sm">
-                  {{ m.get_full_name|default:m.username }}
-                </span>
-              {% empty %}
-                <span class="text-gray-500 italic">Unassigned</span>
-              {% endfor %}
-            </div>
-          {% endwith %}
-        </td>
-        <td class="p-3">
-          <div class="flex items-center gap-2">
-            <a href="{% url 'dropoff_site_detail' site.id %}"
-               class="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">
-              View
+<div class="rounded-xl bg-white shadow-lg ring-1 ring-gray-100 overflow-hidden">
+  <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <svg class="h-5 w-5 text-emerald-600" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12 2a5 5 0 0 1 5 5h2a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V10a3 3 0 0 1 3-3h2a5 5 0 0 1 5-5Zm-7 9v9h14v-9H5Z"/>
+      </svg>
+      <h3 class="text-lg font-semibold text-gray-900">Drop-off Sites</h3>
+    </div>
+  </div>
+
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-gray-100">
+      <thead class="bg-gray-50">
+        <tr>
+          <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Barangay</th>
+          <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Staff</th>
+          <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100">
+        {% for site in sites %}
+        <tr class="hover:bg-gray-50/70">
+          <td class="px-6 py-4">
+            <a href="{% url 'dropoff_site_detail' site.id %}" class="inline-flex items-center gap-2 text-emerald-700 hover:text-emerald-800 font-medium">
+              {{ site.barangay.name|default:site.barangay }}
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M13.172 7H7a1 1 0 1 1 0-2h10a1 1 0 0 1 1 1v10a1 1 0 1 1-2 0V8.828l-8.243 8.243a1 1 0 0 1-1.414-1.415L13.172 7Z"/>
+              </svg>
             </a>
-            <button onclick="exportSiteCSV({{ site.id }})"
-                    class="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
-              Export CSV
-            </button>
-          </div>
-        </td>
-      </tr>
-      {% empty %}
-      <tr>
-        <td colspan="3" class="p-4 text-center text-gray-500">No drop-off sites yet.</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+          </td>
+          <td class="px-6 py-4">
+            {% with members=site.staff_members.all %}
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded-full ring-1 ring-gray-200">
+                  <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm0 2c-4.33 0-8 2.17-8 5v1h16v-1c0-2.83-3.67-5-8-5Z"/></svg>
+                  {{ members|length }} staff
+                </span>
+                {% for m in members %}
+                  <span class="px-2 py-1 bg-gray-50 ring-1 ring-gray-200 rounded-lg text-sm text-gray-800">
+                    {{ m.get_full_name|default:m.username }}
+                  </span>
+                {% empty %}
+                  <span class="text-gray-500 italic text-sm">Unassigned</span>
+                {% endfor %}
+              </div>
+            {% endwith %}
+          </td>
+          <td class="px-6 py-4">
+            <div class="flex items-center gap-2">
+              <a href="{% url 'dropoff_site_detail' site.id %}"
+                 class="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-1.5 text-white text-sm shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                View
+              </a>
+              <button onclick="exportSiteCSV({{ site.id }})"
+                      class="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-1.5 text-white text-sm shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                Export CSV
+              </button>
+            </div>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="3" class="px-6 py-8 text-center text-gray-500">No drop-off sites yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 
 <script>
+  /* Utilities */
   function qs(v){ return encodeURIComponent(v || ""); }
+  if (!window.postJson) {
+    window.postJson = async function(url, body){
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json', 'X-CSRFToken': getCSRF() },
+        body: JSON.stringify(body || {})
+      });
+      const data = await res.json().catch(()=> ({}));
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || data.detail || 'Request failed');
+      }
+      return data;
+    };
+  }
+  function getCSRF(){
+    const m = document.cookie.match(/csrftoken=([^;]+)/);
+    return m ? m[1] : '';
+  }
 
+  /* Exporters */
   function exportAllCSV(){
     const f = document.getElementById('all_from').value;
     const t = document.getElementById('all_to').value;
@@ -157,7 +215,6 @@
     window.location.href = url;
     return false;
   }
-
   function exportSiteCSV(siteId){
     const f = document.getElementById('all_from').value;
     const t = document.getElementById('all_to').value;
@@ -166,20 +223,23 @@
     window.location.href = url;
   }
 
-  // --- Re-auth UI / logic ---
-  const unlockBtn = document.getElementById('unlockBtn');
-  const form = document.getElementById('reauthForm');
-  const cancelReauth = document.getElementById('cancelReauth');
-  const errBox = document.getElementById('reauthErr');
-  const pointsForm = document.getElementById('pointsForm');
+  /* Re-auth UI / logic */
+  const unlockBtn      = document.getElementById('unlockBtn');
+  const form           = document.getElementById('reauthForm');
+  const cancelReauth   = document.getElementById('cancelReauth');
+  const errBox         = document.getElementById('reauthErr');
+  const pointsForm     = document.getElementById('pointsForm');
   const unlockedBanner = document.getElementById('unlockedBanner');
   const unlockTimeLeft = document.getElementById('unlockTimeLeft');
-  const saveBtn = document.getElementById('saveBtn');
-  const saveLabel = saveBtn.querySelector('.save-label');
-  const saveSpinner = saveBtn.querySelector('.save-spinner');
+  const saveBtn        = document.getElementById('saveBtn');
+  const saveLabel      = saveBtn.querySelector('.save-label');
+  const saveSpinner    = saveBtn.querySelector('.save-spinner');
 
   let relockTimer = null;
   let relockDeadline = null;
+
+  function show(el){ el.classList.remove('hidden'); }
+  function hide(el){ el.classList.add('hidden'); }
 
   function setLockedState(locked){
     pointsForm.classList.toggle('opacity-60', locked);
@@ -191,11 +251,7 @@
     unlockBtn.textContent = locked ? '🔒 Unlock editing' : '🔓 Editing unlocked';
     if (locked) {
       hide(unlockedBanner);
-      if (relockTimer) {
-        clearInterval(relockTimer);
-        relockTimer = null;
-      }
-      // Reset Save button visuals
+      if (relockTimer) { clearInterval(relockTimer); relockTimer = null; }
       saveSpinner.classList.add('hidden');
       saveLabel.textContent = 'Save';
     } else {
@@ -203,13 +259,9 @@
     }
   }
 
-  function show(elem){ elem.classList.remove('hidden'); }
-  function hide(elem){ elem.classList.add('hidden'); }
-
   function startRelockCountdown(untilIso){
     try { relockDeadline = new Date(untilIso); } catch { relockDeadline = null; }
     if (!relockDeadline) return;
-
     function tick(){
       const ms = relockDeadline - new Date();
       if (ms <= 0) {
@@ -229,26 +281,17 @@
   }
 
   if (unlockBtn){
-    unlockBtn.addEventListener('click', () => {
-      show(form);
-      hide(errBox);
-    });
+    unlockBtn.addEventListener('click', () => { show(form); hide(errBox); });
   }
-
   if (cancelReauth){
-    cancelReauth.addEventListener('click', () => {
-      hide(form);
-      hide(errBox);
-    });
+    cancelReauth.addEventListener('click', () => { hide(form); hide(errBox); });
   }
 
   async function doReauth(e){
     e.preventDefault();
     hide(errBox);
-
     const fd = new FormData(form);
     const password = fd.get('password');
-
     try {
       const res = await window.postJson("{% url 'reauth_admin' %}", { password });
       hide(form);
@@ -260,19 +303,17 @@
     }
     return false;
   }
+  window.doReauth = doReauth;
 
-  // --- Saving state: DO NOT lock the form on submit; just show spinner & disable the Save button ---
+  // Saving state: keep form editable; just show spinner & disable button
   pointsForm.addEventListener('submit', () => {
-    // prevent changing numbers during submit without blocking form serialization
     pointsForm.querySelectorAll('input[type="number"]').forEach(el => el.readOnly = true);
-
-    saveBtn.disabled = true;              // ok to disable button itself
+    saveBtn.disabled = true;
     saveLabel.textContent = 'Saving…';
     saveSpinner.classList.remove('hidden');
-    // do NOT call setLockedState(true) here
   });
 
-  // Start locked; server enforces on POST.
+  // Start locked
   setLockedState(true);
 </script>
 

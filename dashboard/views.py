@@ -269,6 +269,24 @@ def compute_points(bottle_data: List[Dict]) -> int:
 
 # Put near your other utils in views.py
 
+def _last_12_month_labels(today: date):
+    """Returns ['YYYY-MM', ...] for the last 12 months (oldest → newest)."""
+    lbls = []
+    y, m = today.year, today.month
+    for _ in range(12):
+        lbls.append(f"{y}-{m:02d}")
+        m -= 1
+        if m == 0:
+            m, y = 12, y - 1
+    return list(reversed(lbls))
+
+def _counts_by_month(qs_datetimes, labels_yyyy_mm):
+    """Count items per YYYY-MM label from a queryset of datetimes."""
+    c = Counter()
+    for dt in qs_datetimes:
+        d = localtime(dt).date()
+        c[f"{d.year}-{d.month:02d}"] += 1
+    return [int(c.get(k, 0)) for k in labels_yyyy_mm]
 
 _URL_RE = re.compile(r'(https?://[^\s<>"\']+)', re.IGNORECASE)
 _BULLET_RE = re.compile(r'^\s*[-*•]\s+')
@@ -688,7 +706,6 @@ class DIYSubmitSerializer(serializers.Serializer):
 # Dashboard & Reward Requests (server-rendered)
 # ==============================================================================
 
-
 @require_admin_page
 def dashboard(request):
     # ---- Reloadly wallet (keep your current logic) ----
@@ -711,7 +728,7 @@ def dashboard(request):
 
     # ---- Totals (all-time) ----------------------------------------------------
     total_users = User.objects.count()
-    all_submissions_qs = Submission.objects.all().only("bottle_data", "staff_id", "created_at")
+    all_submissions_qs = Submission.objects.all().only("bottle_data", "created_at")
 
     # bottle totals (all-time, small/large)
     total_small = total_large = 0
@@ -729,7 +746,7 @@ def dashboard(request):
     total_bottles = total_small + total_large
     total_submissions = all_submissions_qs.count()
 
-    # ---- Helper: build time-series counts for a queryset of datetimes --------
+    # ---- Helpers --------------------------------------------------------------
     def _series_from_datetimes(datetimes_qs, labels, mode: str):
         """
         mode: 'year' uses YYYY-MM buckets; otherwise uses YYYY-MM-DD daily buckets.
@@ -741,22 +758,54 @@ def dashboard(request):
             c[key] += 1
         return [int(c.get(lbl, 0)) for lbl in labels]
 
+    def _last_12_month_labels(today: date):
+        """['YYYY-MM', ...] last 12 months (oldest → newest)."""
+        lbls = []
+        y, m = today.year, today.month
+        for _ in range(12):
+            lbls.append(f"{y}-{m:02d}")
+            m -= 1
+            if m == 0:
+                m, y = 12, y - 1
+        return list(reversed(lbls))
+
+    def _counts_by_month(qs_datetimes, labels_yyyy_mm):
+        """Count items per YYYY-MM label from a queryset of datetimes."""
+        c = Counter()
+        for dt in qs_datetimes:
+            d = localtime(dt).date()
+            c[f"{d.year}-{d.month:02d}"] += 1
+        return [int(c.get(k, 0)) for k in labels_yyyy_mm]
+
+    def _sum_sizes_iter(qs_values):
+        """Sum small/large from bottle_data iterable of rows."""
+        small = large = 0
+        for bdata in qs_values:
+            for b in (bdata or []):
+                size = (b.get("size") or "").lower()
+                try:
+                    cnt = int(b.get("count") or b.get("quantity") or 0)
+                except Exception:
+                    cnt = 0
+                if size == "small": small += cnt
+                elif size == "large": large += cnt
+        return small, large
+
     # ---- Users: week / month / year series -----------------------------------
-    # week
     uw_start, uw_end, uw_key, uw_labels = _period_bounds("week")
     user_week_vals = _series_from_datetimes(
         User.objects.filter(date_joined__date__gte=uw_start, date_joined__date__lt=uw_end)
             .values_list("date_joined", flat=True),
         uw_labels, uw_key
     )
-    # month
+
     um_start, um_end, um_key, um_labels = _period_bounds("month")
     user_month_vals = _series_from_datetimes(
         User.objects.filter(date_joined__date__gte=um_start, date_joined__date__lt=um_end)
             .values_list("date_joined", flat=True),
         um_labels, um_key
     )
-    # year
+
     uy_start, uy_end, uy_key, uy_labels = _period_bounds("year")
     user_year_vals = _series_from_datetimes(
         User.objects.filter(date_joined__date__gte=uy_start, date_joined__date__lt=uy_end)
@@ -786,32 +835,35 @@ def dashboard(request):
         sy_labels, sy_key
     )
 
-    # ---- Staff leaderboard (top 10 by bottles, all-time) ---------------------
-    staff_totals = defaultdict(int)  # staff_id -> total bottles
-    for staff_id, bdata in all_submissions_qs.values_list("staff_id", "bottle_data"):
-        if not staff_id:
-            continue
-        s = l = 0
-        for b in (bdata or []):
-            size = (b.get("size") or "").lower()
-            try:
-                cnt = int(b.get("count") or b.get("quantity") or 0)
-            except Exception:
-                cnt = 0
-            if size == "small": s += cnt
-            elif size == "large": l += cnt
-        staff_totals[staff_id] += (s + l)
+    # ---- "All" = last 12 months (clean monthly buckets) ----------------------
+    all_month_labels = _last_12_month_labels(today_ph())
+    user_all_values = _counts_by_month(
+        User.objects.values_list("date_joined", flat=True),
+        all_month_labels
+    )
+    sub_all_values = _counts_by_month(
+        Submission.objects.values_list("created_at", flat=True),
+        all_month_labels
+    )
 
-    # fetch names and build arrays
-    staff_ids_sorted = sorted(staff_totals.keys(), key=lambda i: staff_totals[i], reverse=True)[:10]
-    id_to_user = {u.id: u for u in User.objects.filter(id__in=staff_ids_sorted)}
-    staff_labels = []
-    staff_values = []
-    for sid in staff_ids_sorted:
-        u = id_to_user.get(sid)
-        label = (u.get_full_name() or u.username) if u else f"Staff {sid}"
-        staff_labels.append(label)
-        staff_values.append(int(staff_totals[sid]))
+    # ---- Bottle pies per period (week/month/year) ----------------------------
+    bw_start, bw_end, _, _ = _period_bounds("week")
+    w_small, w_large = _sum_sizes_iter(
+        Submission.objects.filter(created_at__date__gte=bw_start, created_at__date__lt=bw_end)
+                 .values_list("bottle_data", flat=True)
+    )
+
+    bm_start, bm_end, _, _ = _period_bounds("month")
+    m_small, m_large = _sum_sizes_iter(
+        Submission.objects.filter(created_at__date__gte=bm_start, created_at__date__lt=bm_end)
+                 .values_list("bottle_data", flat=True)
+    )
+
+    by_start, by_end, _, _ = _period_bounds("year")
+    y_small, y_large = _sum_sizes_iter(
+        Submission.objects.filter(created_at__date__gte=by_start, created_at__date__lt=by_end)
+                 .values_list("bottle_data", flat=True)
+    )
 
     # ---- Context for template (pre-JSON-dumped where used in JS) -------------
     context = {
@@ -846,13 +898,18 @@ def dashboard(request):
         "sub_year_labels": json.dumps(sy_labels),
         "sub_year_values": json.dumps(sub_year_vals),
 
-        # Bottle size pie (all-time)
-        "pie_labels": json.dumps(["Small", "Large"]),
-        "pie_values": json.dumps([int(total_small), int(total_large)]),
+        # "All" (last 12 months) for cleaner monthly line charts
+        "user_all_labels": json.dumps(all_month_labels),
+        "user_all_values": json.dumps(user_all_values),
+        "sub_all_labels": json.dumps(all_month_labels),
+        "sub_all_values": json.dumps(sub_all_values),
 
-        # Staff leaderboard (all-time)
-        "staff_labels": json.dumps(staff_labels),
-        "staff_values": json.dumps(staff_values),
+        # Bottle size pies
+        "pie_labels": json.dumps(["Small", "Large"]),
+        "pie_values": json.dumps([int(total_small), int(total_large)]),          # All-time
+        "pie_week_values": json.dumps([int(w_small), int(w_large)]),             # This week
+        "pie_month_values": json.dumps([int(m_small), int(m_large)]),            # This month
+        "pie_year_values": json.dumps([int(y_small), int(y_large)]),             # This year
     }
     return render(request, "dashboard.html", context)
 

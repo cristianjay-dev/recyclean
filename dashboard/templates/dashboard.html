@@ -1,92 +1,146 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h1 class="text-3xl font-semibold mb-6">Dashboard</h1>
+<!-- Page header -->
+<div class="mb-8">
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-4xl font-bold tracking-tight text-gray-900">Recyclean Overview</h1>
+      <p class="mt-2 text-md text-gray-600">Gain insights into your key performance metrics at a glance.</p>
+    </div>
 
-<!-- KPI cards -->
-<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-  <!-- Total Users -->
-  <div class="bg-white shadow rounded-xl p-5">
-    <div class="text-gray-500 text-sm">Total Users</div>
-    <div class="mt-1 text-3xl font-bold">{{ total_users }}</div>
+    <!-- Global range selector -->
+    <div class="flex items-center gap-3">
+      <label for="date-range-selector" class="text-sm font-medium text-gray-700">Display Data For:</label>
+      <select id="date-range-selector" class="block w-40 rounded-lg border-gray-300 bg-white/70 backdrop-blur-md py-2 pl-3 pr-8 text-base text-gray-800 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 sm:text-sm shadow-sm transition-all duration-200 ease-in-out">
+        <option value="all" selected>All Time Data</option>
+        <option value="week">This Week</option>
+        <option value="month">This Month</option>
+        <option value="year">This Year</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<!-- KPI Cards -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+  <!-- Users -->
+  <div class="group relative overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-gray-100 transform hover:scale-[1.02] transition-all duration-300 ease-in-out">
+    <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-500 via-sky-500 to-indigo-500"></div>
+    <div class="p-6">
+      <div class="flex items-start justify-between">
+        <div>
+          <div class="flex items-center gap-2 text-gray-600 text-sm font-medium">
+            <svg class="h-5 w-5 text-emerald-600" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm0 2c-4.33 0-8 2.17-8 5v1h16v-1c0-2.83-3.67-5-8-5Z"/>
+            </svg>
+            Registered Users
+          </div>
+          <div class="mt-2 text-4xl font-bold tracking-tight text-gray-900">{{ total_users }}</div>
+        </div>
+      </div>
+      <div class="mt-5 h-48">
+        <canvas id="usersChart" class="w-full h-full"></canvas>
+      </div>
+    </div>
   </div>
 
-  <!-- Total Bottles (small/large) -->
-  <div class="bg-white shadow rounded-xl p-5">
-    <div class="text-gray-500 text-sm">Total Plastic Bottles</div>
-    <div class="mt-1 text-3xl font-bold">{{ total_bottles }}</div>
-    <div class="mt-2 text-xs text-gray-500">Small: {{ total_bottles_small }} • Large: {{ total_bottles_large }}</div>
+  <!-- Submissions -->
+  <div class="group relative overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-gray-100 transform hover:scale-[1.02] transition-all duration-300 ease-in-out">
+    <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-indigo-500 via-fuchsia-500 to-pink-500"></div>
+    <div class="p-6">
+      <div class="flex items-start justify-between">
+        <div>
+          <div class="flex items-center gap-2 text-gray-600 text-sm font-medium">
+            <svg class="h-5 w-5 text-indigo-600" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M19 3H5a2 2 0 0 0-2 2v2h18V5a2 2 0 0 0-2-2Zm2 6H3v8a2 2 0 0 0 2 2h8l2 2 2-2h2a2 2 0 0 0 2-2Z"/>
+            </svg>
+            Total Submissions
+          </div>
+          <div class="mt-2 text-4xl font-bold tracking-tight text-gray-900">{{ total_submissions }}</div>
+        </div>
+      </div>
+      <div class="mt-5 h-48">
+        <canvas id="subsChart" class="w-full h-full"></canvas>
+      </div>
+    </div>
   </div>
 
-  <!-- Total Submissions -->
-  <div class="bg-white shadow rounded-xl p-5">
-    <div class="text-gray-500 text-sm">Total Submissions</div>
-    <div class="mt-1 text-3xl font-bold">{{ total_submissions }}</div>
+  <!-- Bottles -->
+  <div class="group relative overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-gray-100 transform hover:scale-[1.02] transition-all duration-300 ease-in-out">
+    <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-amber-500 via-lime-500 to-emerald-500"></div>
+    <div class="p-6">
+      <div class="flex items-start justify-between">
+        <div>
+          <div class="flex items-center gap-2 text-gray-600 text-sm font-medium">
+            <svg class="h-5 w-5 text-amber-600" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M10 2h4v3l1 1v4l-1 1v9a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2V11l-1-1V6l1-1Z"/>
+            </svg>
+            Plastic Bottles Recycled
+          </div>
+          <div class="mt-2 text-4xl font-bold tracking-tight text-gray-900">{{ total_bottles }}</div>
+          <div class="mt-2 text-sm text-gray-500">
+            <span class="font-semibold">Small:</span> {{ total_bottles_small }} •
+            <span class="font-semibold">Large:</span> {{ total_bottles_large }}
+          </div>
+        </div>
+      </div>
+      <div class="mt-5 h-48">
+        <canvas id="pieChart" class="w-full h-full"></canvas>
+      </div>
+    </div>
   </div>
+</div>
 
-  <!-- Reloadly Wallet -->
-  <div class="bg-white shadow rounded-xl p-5">
-    <div class="flex items-center justify-between">
-      <div class="text-gray-500 text-sm">Reloadly Wallet</div>
-      {% if reloadly_updated_at %}
-      <div class="text-[10px] text-gray-400">Updated: {{ reloadly_updated_at }}</div>
+<!-- Reloadly Wallet (with hide/show toggle) -->
+<div class="mt-8">
+  <div class="rounded-xl bg-gradient-to-tr from-emerald-100 to-white p-[2px] shadow-lg">
+    <div class="bg-white rounded-xl p-6 shadow-inner ring-1 ring-gray-50">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3 text-gray-800">
+          <svg class="h-6 w-6 text-emerald-600" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M2 7a3 3 0 0 1 3-3h14a3 3 0 0 1 3 3v10a2 2 0 0 1-2 2H5a3 3 0 0 1-3-3Zm3-1a1 1 0 0 0-1 1v6a3 3 0 0 0 3 3h13V7a1 1 0 0 0-1-1Zm9 3a2 2 0 1 0 2 2 2 2 0 0 0-2-2Z"/>
+          </svg>
+          <span class="text-lg font-semibold">Reloadly Wallet Balance</span>
+          {% if reloadly_updated_at %}
+            <span class="text-xs text-gray-500">• Updated <span class="font-medium">{{ reloadly_updated_at }}</span></span>
+          {% endif %}
+        </div>
+
+        <!-- Toggle button -->
+        <button id="toggle-wallet" type="button"
+          class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white/70 backdrop-blur px-3 py-1.5 text-sm text-gray-700 shadow-sm hover:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
+          aria-label="Show balance" title="Show balance">
+          <!-- Eye icon (will swap to eye-off when visible) -->
+          <svg id="wallet-eye" class="h-4 w-4 text-gray-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5c-5 0-9 4-10 7 1 3 5 7 10 7s9-4 10-7c-1-3-5-7-10-7Zm0 12a5 5 0 1 1 5-5 5 5 0 0 1-5 5Zm0-8a3 3 0 1 0 3 3 3 3 0 0 0-3-3Z"/></svg>
+          <span id="wallet-toggle-text">Show</span>
+        </button>
+      </div>
+
+      {% if reloadly_balance is not None %}
+        <!-- Masked by default. We keep the real value in data-* attributes. -->
+        <div class="mt-3 flex items-baseline gap-2">
+          <span id="wallet-amount"
+                class="text-5xl font-bold tracking-tight text-gray-900 select-none tabular-nums"
+                data-balance="{{ reloadly_balance }}"
+                data-symbol="{% if reloadly_currency_symbol %}{{ reloadly_currency_symbol }}{% else %}₱{% endif %}"
+                data-code="{{ reloadly_currency_code }}">••••••</span>
+          <span class="text-lg text-gray-500 align-text-bottom ml-1">{{ reloadly_currency_code }}</span>
+        </div>
+      {% else %}
+        <div class="mt-3 text-red-600 font-semibold text-xl">Unable to retrieve balance</div>
+        {% if reloadly_error %}<div class="mt-2 text-sm text-gray-500">{{ reloadly_error }}</div>{% endif %}
       {% endif %}
     </div>
-    {% if reloadly_balance is not None %}
-      <div class="mt-1 text-3xl font-bold">
-        {% if reloadly_currency_symbol %}{{ reloadly_currency_symbol }}{% else %}₱{% endif %}{{ reloadly_balance }}
-        <span class="text-sm text-gray-400">{{ reloadly_currency_code }}</span>
-      </div>
-    {% else %}
-      <div class="mt-1 text-red-500 font-medium">Unable to fetch balance</div>
-      {% if reloadly_error %}<div class="mt-1 text-xs text-gray-400">{{ reloadly_error }}</div>{% endif %}
-    {% endif %}
   </div>
 </div>
-
-<!-- Charts -->
-<!-- Charts -->
-<div class="mt-8 grid grid-cols-1 xl:grid-cols-2 gap-6">
-  <!-- Users chart -->
-  <div class="bg-white shadow rounded-xl p-6">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-lg font-semibold">User Sign-ups</h2>
-      <select id="users-range" class="border rounded-md text-sm px-2 py-1">
-        <option value="week" selected>Week</option>
-        <option value="month">Month</option>
-        <option value="year">Year</option>
-      </select>
-    </div>
-    <canvas id="usersChart" height="120"></canvas>
-  </div>
-
-  <!-- Submissions chart -->
-  <div class="bg-white shadow rounded-xl p-6">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-lg font-semibold">Submissions</h2>
-      <select id="subs-range" class="border rounded-md text-sm px-2 py-1">
-        <option value="week" selected>Week</option>
-        <option value="month">Month</option>
-        <option value="year">Year</option>
-      </select>
-    </div>
-    <canvas id="subsChart" height="120"></canvas>
-  </div>
-
-  <!-- Bottle size pie -->
-  <div class="bg-white shadow rounded-xl p-6 xl:col-span-2">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-lg font-semibold">Bottle Size Mix (All-time)</h2>
-    </div>
-    <canvas id="pieChart" height="180"></canvas>
-  </div>
-</div>
-
 
 <!-- Chart.js -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-  // Incoming data
+  /* ---------- charts data & setup: unchanged from your current file ---------- */
+  const userAllLabels   = {{ user_all_labels|safe }};
+  const userAllValues   = {{ user_all_values|safe }};
   const userWeekLabels  = {{ user_week_labels|safe }};
   const userWeekValues  = {{ user_week_values|safe }};
   const userMonthLabels = {{ user_month_labels|safe }};
@@ -94,6 +148,8 @@
   const userYearLabels  = {{ user_year_labels|safe }};
   const userYearValues  = {{ user_year_values|safe }};
 
+  const subAllLabels    = {{ sub_all_labels|safe }};
+  const subAllValues    = {{ sub_all_values|safe }};
   const subWeekLabels   = {{ sub_week_labels|safe }};
   const subWeekValues   = {{ sub_week_values|safe }};
   const subMonthLabels  = {{ sub_month_labels|safe }};
@@ -101,53 +157,119 @@
   const subYearLabels   = {{ sub_year_labels|safe }};
   const subYearValues   = {{ sub_year_values|safe }};
 
-  const pieLabels       = {{ pie_labels|safe }};
-  const pieValues       = {{ pie_values|safe }};
+  const pieLabels      = {{ pie_labels|safe }};
+  const pieAllValues   = {{ pie_values|safe }};
+  const pieWeekValues  = {{ pie_week_values|safe }};
+  const pieMonthValues = {{ pie_month_values|safe }};
+  const pieYearValues  = {{ pie_year_values|safe }};
+
+  Chart.defaults.font.family = 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial';
+  Chart.defaults.color = '#6b7280';
+
+  function formatLabel(lbl){
+    if(!lbl) return '';
+    const p = String(lbl).split('-');
+    if(p.length===3) return p[1]+'/'+p[2];
+    if(p.length===2){ const m=Math.max(1,Math.min(12,parseInt(p[1],10)))-1; return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m]; }
+    return lbl;
+  }
 
   const baseLineOpts = {
-    responsive: true,
-    maintainAspectRatio: false,
-    scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
-    plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } }
+    responsive:true, maintainAspectRatio:false, tension:.4, cubicInterpolationMode:'monotone',
+    elements:{ point:{ radius:0, hitRadius:10, hoverRadius:4 } },
+    plugins:{ legend:{display:false}, tooltip:{ mode:'index', intersect:false, backgroundColor:'rgba(30,41,59,.95)', titleFont:{size:14,weight:'bold'}, bodyFont:{size:12}, padding:10, cornerRadius:6 } },
+    scales:{
+      x:{ grid:{display:false}, ticks:{ autoSkip:true, maxTicksLimit:7, color:'#6b7280', callback:function(v){ return formatLabel(this.getLabelForValue(v)); } } },
+      y:{ beginAtZero:true, ticks:{ precision:0, color:'#6b7280' }, grid:{ color:'rgba(0,0,0,0.08)' } }
+    }
   };
 
-  const usersCtx = document.getElementById('usersChart').getContext('2d');
-  const usersChart = new Chart(usersCtx, {
-    type: 'bar',
-    data: { labels: userWeekLabels, datasets: [{ label: 'Sign-ups', data: userWeekValues }] },
-    options: baseLineOpts
-  });
+  const pieOpts = {
+    responsive:true, maintainAspectRatio:false,
+    plugins:{
+      legend:{ position:'bottom', labels:{ usePointStyle:true, padding:20, font:{size:13,weight:'500'} } },
+      tooltip:{ backgroundColor:'rgba(30,41,59,.95)', titleFont:{size:14,weight:'bold'}, bodyFont:{size:12}, padding:10, cornerRadius:6 }
+    }
+  };
 
-  const subsCtx = document.getElementById('subsChart').getContext('2d');
-  const subsChart = new Chart(subsCtx, {
-    type: 'bar',
-    data: { labels: subWeekLabels, datasets: [{ label: 'Submissions', data: subWeekValues }] },
-    options: baseLineOpts
-  });
+  function makeGradients(ctx){
+    const h=ctx.canvas.height;
+    const g1=ctx.createLinearGradient(0,0,0,h); g1.addColorStop(0,'rgba(16,185,129,0.4)'); g1.addColorStop(1,'rgba(16,185,129,0.05)');
+    const g2=ctx.createLinearGradient(0,0,0,h); g2.addColorStop(0,'rgba(99,102,241,0.4)'); g2.addColorStop(1,'rgba(99,102,241,0.05)');
+    return { fill1:g1, border1:'rgba(16,185,129,1)', fill2:g2, border2:'rgba(99,102,241,1)' };
+  }
 
-  const pieCtx = document.getElementById('pieChart').getContext('2d');
-  const pieChart = new Chart(pieCtx, {
-    type: 'doughnut',
-    data: { labels: pieLabels, datasets: [{ label: 'Bottles', data: pieValues }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
-  });
+  const usersCtx=document.getElementById('usersChart').getContext('2d');
+  const gU=makeGradients(usersCtx);
+  const usersChart=new Chart(usersCtx,{ type:'line', data:{ labels:userAllLabels, datasets:[{ label:'New Sign-ups', data:userAllValues, borderColor:gU.border1, backgroundColor:gU.fill1, borderWidth:2, fill:true }] }, options:baseLineOpts });
 
-  // Range toggles
-  document.getElementById('users-range').addEventListener('change', (e) => {
-    const v = e.target.value;
-    if (v === 'week') { usersChart.data.labels = userWeekLabels; usersChart.data.datasets[0].data = userWeekValues; }
-    else if (v === 'month') { usersChart.data.labels = userMonthLabels; usersChart.data.datasets[0].data = userMonthValues; }
-    else { usersChart.data.labels = userYearLabels; usersChart.data.datasets[0].data = userYearValues; }
-    usersChart.update();
-  });
+  const subsCtx=document.getElementById('subsChart').getContext('2d');
+  const gS=makeGradients(subsCtx);
+  const subsChart=new Chart(subsCtx,{ type:'line', data:{ labels:subAllLabels, datasets:[{ label:'Total Submissions', data:subAllValues, borderColor:gS.border2, backgroundColor:gS.fill2, borderWidth:2, fill:true }] }, options:baseLineOpts });
 
-  document.getElementById('subs-range').addEventListener('change', (e) => {
-    const v = e.target.value;
-    if (v === 'week') { subsChart.data.labels = subWeekLabels; subsChart.data.datasets[0].data = subWeekValues; }
-    else if (v === 'month') { subsChart.data.labels = subMonthLabels; subsChart.data.datasets[0].data = subMonthValues; }
-    else { subsChart.data.labels = subYearLabels; subsChart.data.datasets[0].data = subYearValues; }
-    subsChart.update();
-  });
+  const pieCtx=document.getElementById('pieChart').getContext('2d');
+  const pieChart=new Chart(pieCtx,{ type:'doughnut', data:{ labels:pieLabels, datasets:[{ data:pieAllValues, backgroundColor:['#fcd34d','#84cc16'], hoverOffset:8 }] }, options:pieOpts });
+
+  // Global selector updates all charts
+  const rangeSelect=document.getElementById('date-range-selector');
+  function setCharts(range){
+    if(range==='all'){ usersChart.data.labels=userAllLabels; usersChart.data.datasets[0].data=userAllValues;
+                       subsChart.data.labels=subAllLabels;  subsChart.data.datasets[0].data=subAllValues;
+                       pieChart.data.datasets[0].data=pieAllValues; }
+    else if(range==='week'){ usersChart.data.labels=userWeekLabels; usersChart.data.datasets[0].data=userWeekValues;
+                             subsChart.data.labels=subWeekLabels; subsChart.data.datasets[0].data=subWeekValues;
+                             pieChart.data.datasets[0].data=pieWeekValues; }
+    else if(range==='month'){ usersChart.data.labels=userMonthLabels; usersChart.data.datasets[0].data=userMonthValues;
+                              subsChart.data.labels=subMonthLabels; subsChart.data.datasets[0].data=subMonthValues;
+                              pieChart.data.datasets[0].data=pieMonthValues; }
+    else { usersChart.data.labels=userYearLabels; usersChart.data.datasets[0].data=userYearValues;
+           subsChart.data.labels=subYearLabels;  subsChart.data.datasets[0].data=subYearValues;
+           pieChart.data.datasets[0].data=pieYearValues; }
+    usersChart.update(); subsChart.update(); pieChart.update();
+  }
+  rangeSelect.addEventListener('change', e=>setCharts(e.target.value));
+
+  /* ---------- Reloadly balance hide/show ---------- */
+  (function(){
+    const amtEl = document.getElementById('wallet-amount');
+    const btn   = document.getElementById('toggle-wallet');
+    if(!amtEl || !btn) return;
+
+    const eyeEl = document.getElementById('wallet-eye');
+    const textEl= document.getElementById('wallet-toggle-text');
+
+    // Remember preference
+    let shown = localStorage.getItem('reloadlyBalanceShown') === '1';
+
+    const eyeIcon = {
+      show: '<path d="M12 5c-5 0-9 4-10 7 1 3 5 7 10 7s9-4 10-7c-1-3-5-7-10-7Zm0 12a5 5 0 1 1 5-5 5 5 0 0 1-5 5Zm0-8a3 3 0 1 0 3 3 3 3 0 0 0-3-3Z"/>',
+      hide: '<path d="M3 3l18 18-1.41 1.41-2.43-2.43C15.64 21 13.86 21 12 21 7 21 3 17 2 14c.43-1.28 1.32-2.8 2.57-4.14L1.59 4.41 3 3Zm7.1 7.1 3.8 3.8a3 3 0 0 0-3.8-3.8ZM12 5c5 0 9 4 10 7-.38 1.1-1.09 2.45-2.17 3.67l-2.2-2.2A5 5 0 0 0 12 7a4.98 4.98 0 0 0-2.53.69L7.3 5.52C8.63 5.17 10.07 5 12 5Z"/>'
+    };
+
+    function render(){
+      if (shown) {
+        const sym = amtEl.dataset.symbol || '₱';
+        const val = amtEl.dataset.balance || '';
+        amtEl.textContent = `${sym}${val}`;
+        if (eyeEl) eyeEl.innerHTML = eyeIcon.hide;
+        if (textEl) textEl.textContent = 'Hide';
+        btn.setAttribute('aria-label','Hide balance');
+        btn.title = 'Hide balance';
+      } else {
+        amtEl.textContent = '••••••';
+        if (eyeEl) eyeEl.innerHTML = eyeIcon.show;
+        if (textEl) textEl.textContent = 'Show';
+        btn.setAttribute('aria-label','Show balance');
+        btn.title = 'Show balance';
+      }
+    }
+
+    render();
+    btn.addEventListener('click', () => {
+      shown = !shown;
+      localStorage.setItem('reloadlyBalanceShown', shown ? '1' : '0');
+      render();
+    });
+  })();
 </script>
-
 {% endblock %}

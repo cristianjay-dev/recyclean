@@ -8,10 +8,10 @@
     <!-- Header -->
     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-bold">DIY Tutorials Management</h1>
-        <p class="text-gray-600">
-          Add tutorials to your manual pool, toggle <span class="font-semibold">Active</span> to include in the rotation,
-          and the app will show <span class="font-semibold">{{ DIY_DAILY_COUNT }} tutorials per {{ DIY_PERIOD|default:"week" }}</span>.
+        <h1 class="text-4xl font-bold tracking-tight text-gray-900">DIY Tutorials Management</h1>
+        <p class="mt-2 text-md text-gray-600">
+          Add tutorials to your manual pool, toggle <span class="font-semibold">Active</span> to include in the rotation.
+          The app shows <span class="font-semibold">{{ DIY_DAILY_COUNT }} tutorials per {{ DIY_PERIOD|default:"week" }}</span>.
         </p>
       </div>
 
@@ -19,154 +19,182 @@
         <button onclick="openAddModal()"
                 class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/50 active:scale-[.99] transition">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 -ml-0.5" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" />
+            <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/>
           </svg>
           Add Tutorial
         </button>
       </div>
     </div>
 
-    <!-- Today’s DIY (rotation) -->
-    <div class="bg-white p-6 rounded-2xl shadow-sm ring-1 ring-black/5">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-xl font-semibold">This Period’s DIY Selection</h2>
-        <div class="flex gap-2">
-          <button id="refreshTodayBtn"
-                  class="inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300/60 transition"
-                  title="Re-pick using /api/diy/daily?refresh=1">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 6V3L8 7l4 4V8a4 4 0 11-4 4H6a6 6 0 106-6z"/></svg>
-            Re-pick
-          </button>
-          <button id="reloadTodayBtn"
-                  class="inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300/60 transition"
-                  title="Reload from /api/diy/daily">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M11 4a8 8 0 017.446 5H22l-3.5 3.5L15 9h2.09A6 6 0 1018 13h2a8 8 0 11-9-9z"/></svg>
-            Reload
-          </button>
+    <!-- This Period’s DIY Selection -->
+    <div class="group relative overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-gray-100">
+      <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-500 via-sky-500 to-indigo-500"></div>
+      <div class="p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-semibold text-gray-900">This Period’s DIY Selection</h2>
+          <div class="flex gap-2">
+            <button id="refreshTodayBtn"
+                    class="inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300/60 transition"
+                    title="Re-pick using /api/diy/daily?refresh=1">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 6V3L8 7l4 4V8a4 4 0 11-4 4H6a6 6 0 106-6z"/></svg>
+              Re-pick
+            </button>
+            <button id="reloadTodayBtn"
+                    class="inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300/60 transition"
+                    title="Reload from /api/diy/daily">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M11 4a8 8 0 017.446 5H22l-3.5 3.5L15 9h2.09A6 6 0 1018 13h2a8 8 0 11-9-9z"/></svg>
+              Reload
+            </button>
+          </div>
         </div>
-      </div>
 
-      <div id="todayBox" class="border border-dashed rounded-xl p-4 bg-gray-50">
-        <p class="text-gray-500">Loading selection…</p>
+        <div id="todayBox" class="border border-dashed rounded-xl p-4 bg-gray-50">
+          <p class="text-gray-500">Loading selection…</p>
+        </div>
+        <p class="text-xs text-gray-500 mt-2">
+          Count follows <code>DIY_DAILY_COUNT</code>. “Re-pick” refreshes the current period’s selection.
+        </p>
       </div>
-      <p class="text-xs text-gray-500 mt-2">
-        Count follows <code>DIY_DAILY_COUNT</code>. “Re-pick” refreshes the current period’s selection.
-      </p>
     </div>
 
-    <!-- Pool (All Tutorials) -->
-    <div class="bg-white p-6 rounded-2xl shadow-sm ring-1 ring-black/5">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-xl font-semibold">Tutorial Pool ({{ tutorials.count }} total)</h2>
-        <span class="inline-flex items-center gap-2 text-sm px-2.5 py-1 rounded-full bg-blue-50 text-blue-800 ring-1 ring-inset ring-blue-200">
-          <span class="h-2 w-2 rounded-full bg-blue-500"></span> Active = in rotation
-        </span>
-      </div>
+    <!-- Tutorial Pool -->
+    <div class="group relative overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-gray-100">
+      <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-indigo-500 via-fuchsia-500 to-pink-500"></div>
+      <div class="p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-semibold text-gray-900">Tutorial Pool ({{ tutorials.count }} total)</h2>
+          <span class="inline-flex items-center gap-2 text-sm px-2.5 py-1 rounded-full bg-blue-50 text-blue-800 ring-1 ring-inset ring-blue-200">
+            <span class="h-2 w-2 rounded-full bg-blue-500"></span> Active = in rotation
+          </span>
+        </div>
 
-      <div class="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
-        {% for t in tutorials %}
-          <div class="border rounded-xl p-4 bg-gray-50 hover:bg-white hover:shadow-sm hover:border-gray-300 transition">
-            <div class="flex gap-4">
-              {% if t.thumbnail %}
-                <img src="{{ t.thumbnail.url }}" alt="" class="w-24 h-24 object-cover rounded-lg ring-1 ring-black/5">
-              {% else %}
-                <div class="w-24 h-24 flex items-center justify-center rounded-lg bg-gray-200 text-gray-500 text-xs ring-1 ring-black/5">No image</div>
-              {% endif %}
+        <div class="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+          {% for t in tutorials %}
+            <div class="border rounded-xl p-4 bg-gray-50 hover:bg-white hover:shadow-sm hover:border-gray-300 ring-1 ring-black/5 transition">
+              <div class="flex gap-4">
+                {% if t.thumbnail %}
+                  <img src="{{ t.thumbnail.url }}" alt="" class="w-24 h-24 md:w-28 md:h-28 object-cover rounded-lg ring-1 ring-black/5">
+                {% else %}
+                  <div class="w-24 h-24 md:w-28 md:h-28 flex items-center justify-center rounded-lg bg-gray-200 text-gray-500 text-xs ring-1 ring-black/5">No image</div>
+                {% endif %}
 
-              <div class="flex-1">
-                <div class="flex items-start justify-between gap-3">
-                  <div>
-                    <p class="font-semibold leading-snug">{{ t.title }}</p>
-                    {% if t.video_url %}
-                      <a href="{{ t.video_url }}" target="_blank" class="text-sm text-blue-600 hover:underline break-all">
-                        {{ t.video_url }}
-                      </a>
-                    {% endif %}
-                    <p class="text-sm text-gray-600 mt-1 line-clamp-2">{{ t.description }}</p>
+                <div class="flex-1">
+                  <div class="flex items-start justify-between gap-3">
+                    <div>
+                      <p class="font-semibold leading-snug text-gray-900">{{ t.title }}</p>
+                      {% if t.video_url %}
+                        <a href="{{ t.video_url }}" target="_blank" class="text-sm text-blue-600 hover:underline break-all">
+                          {{ t.video_url }}
+                        </a>
+                      {% endif %}
+                      <p class="text-sm text-gray-600 mt-1 line-clamp-2">{{ t.description }}</p>
+                    </div>
+                    <span class="text-[11px] font-semibold tracking-wide uppercase ml-4 px-2.5 py-1 rounded-full whitespace-nowrap
+                      {% if t.is_active %}bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-200{% else %}bg-gray-200 text-gray-700 ring-1 ring-inset ring-gray-300{% endif %}">
+                      {{ t.is_active|yesno:"Active,Inactive" }}
+                    </span>
                   </div>
-                  <span class="text-[11px] font-semibold tracking-wide uppercase ml-4 px-2.5 py-1 rounded-full whitespace-nowrap
-                    {% if t.is_active %}bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-200{% else %}bg-gray-200 text-gray-700 ring-1 ring-inset ring-gray-300{% endif %}">
-                    {{ t.is_active|yesno:"Active,Inactive" }}
-                  </span>
-                </div>
 
-                <div class="mt-2 text-sm text-gray-700 flex flex-wrap items-center gap-3">
-                  <span>Points: <span class="font-semibold">{{ t.points_on_submit }}</span></span>
-                  {% if t.duration_seconds %}<span>• Duration: {{ t.duration_seconds }}s</span>{% endif %}
-                  {% if t.created_at %}<span>• Added: {{ t.created_at|date:"M d, Y" }}</span>{% endif %}
-                </div>
+                  <div class="mt-2 text-sm text-gray-700 flex flex-wrap items-center gap-3">
+                    <span>Points: <span class="font-semibold">{{ t.points_on_submit }}</span></span>
+                    {% if t.duration_seconds %}<span>• Duration: {{ t.duration_seconds }}s</span>{% endif %}
+                    {% if t.created_at %}<span>• Added: {{ t.created_at|date:"M d, Y" }}</span>{% endif %}
+                  </div>
 
-                <div class="mt-3 flex items-center justify-end flex-wrap gap-2">
-                  <button
-                    onclick="openEditModal({{ t.id }}, `{{ t.title|escapejs }}`, `{{ t.description|escapejs }}`, `{{ t.video_url|escapejs }}`, {{ t.duration_seconds|default:'null' }}, {{ t.points_on_submit|default:0 }}, {{ t.is_active|yesno:'true,false' }})"
-                    class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-amber-700 hover:bg-amber-50 hover:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-300/60 transition text-sm">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 -ml-0.5" viewBox="0 0 24 24" fill="currentColor"><path d="M5 15.5V19h3.5L18 9.5 14.5 6 5 15.5zM20.7 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83L18.87 8.9l1.83-1.86z"/></svg>
-                    Edit
-                  </button>
+                  <div class="mt-3 flex items-center justify-end flex-wrap gap-2">
+                    <button
+                      onclick="openEditModal({{ t.id }}, `{{ t.title|escapejs }}`, `{{ t.description|escapejs }}`, `{{ t.video_url|escapejs }}`, {{ t.duration_seconds|default:'null' }}, {{ t.points_on_submit|default:0 }}, {{ t.is_active|yesno:'true,false' }})"
+                      class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-amber-700 hover:bg-amber-50 hover:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-300/60 transition text-sm">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 -ml-0.5" viewBox="0 0 24 24" fill="currentColor"><path d="M5 15.5V19h3.5L18 9.5 14.5 6 5 15.5zM20.7 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83L18.87 8.9l1.83-1.86z"/></svg>
+                      Edit
+                    </button>
 
-                  <button
-                    onclick="deleteTutorial({{ t.id }})"
-                    class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400 focus:outline-none focus:ring-2 focus:ring-red-300/60 transition text-sm">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 -ml-0.5" viewBox="0 0 24 24" fill="currentColor"><path d="M9 3h6a1 1 0 011 1v1h4v2H4V5h4V4a1 1 0 011-1zm1 6h2v8h-2V9zm4 0h2v8h-2V9zm-8 0h2v8H6V9z"/></svg>
-                    Delete
-                  </button>
+                    <button
+                      onclick="openDeleteConfirm({{ t.id }})"
+                      class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400 focus:outline-none focus:ring-2 focus:ring-red-300/60 transition text-sm">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 -ml-0.5" viewBox="0 0 24 24" fill="currentColor"><path d="M9 3h6a1 1 0 011 1v1h4v2H4V5h4V4a1 1 0 011-1zm1 6h2v8h-2V9zm4 0h2v8h-2V9zm-8 0h2v8H6V9z"/></svg>
+                      Delete
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        {% empty %}
-          <p class="italic text-gray-500 text-center py-4">No tutorials yet. Click “Add Tutorial” to start your pool.</p>
-        {% endfor %}
+          {% empty %}
+            <p class="italic text-gray-500 text-center py-4">No tutorials yet. Click “Add Tutorial” to start your pool.</p>
+          {% endfor %}
+        </div>
       </div>
     </div>
 
   </div>
 </div>
 
+<!-- Toast (top-right) -->
+<div id="toast" class="hidden fixed top-4 right-4 z-50">
+  <div id="toastInner" class="pointer-events-auto flex w-80 items-start gap-3 rounded-xl border bg-white p-4 shadow-lg ring-1 ring-black/5">
+    <div id="toastIcon" class="mt-0.5 h-8 w-8 shrink-0 rounded-full flex items-center justify-center"></div>
+    <div class="min-w-0">
+      <p id="toastTitle" class="text-sm font-semibold text-gray-900">Success</p>
+      <p id="toastMsg" class="mt-0.5 text-sm text-gray-600"></p>
+    </div>
+    <button type="button" onclick="hideToast()" class="ml-auto text-gray-400 hover:text-gray-600">
+      <span class="sr-only">Close</span> ×
+    </button>
+  </div>
+</div>
+
+<!-- Confirm Delete Modal -->
+<div id="confirmModal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true">
+  <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl ring-1 ring-gray-100">
+    <div class="p-5 flex gap-3">
+      <div class="h-10 w-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center p-2">
+        <svg class="h-full w-full block" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 5v7h-2V7h2Zm0 10v2h-2v-2h2Z"/></svg>
+      </div>
+      <div class="min-w-0">
+        <h3 class="text-lg font-semibold text-gray-900">Delete tutorial?</h3>
+        <p class="text-sm text-gray-600 mt-1">This action can’t be undone.</p>
+      </div>
+    </div>
+    <div class="px-5 pb-5 flex justify-end gap-2">
+      <button type="button" onclick="closeConfirm()" class="px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50">Cancel</button>
+      <button type="button" id="confirmDeleteBtn" class="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700">Delete</button>
+    </div>
+  </div>
+</div>
+
 <!-- Add/Edit Modal -->
 <div id="diyModal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-  <div class="bg-white p-7 md:p-8 rounded-2xl shadow-2xl w-full max-w-3xl relative ring-1 ring-black/5">
+  <div class="bg-white p-7 md:p-8 rounded-2xl shadow-2xl w-full max-w-3xl relative ring-1 ring-gray-100">
     <button onclick="closeModal()"
             class="absolute top-3 right-3 inline-flex items-center justify-center h-10 w-10 rounded-full bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300/60 transition"
-            aria-label="Close">
-      ×
-    </button>
+            aria-label="Close">×</button>
     <h2 id="modalTitle" class="text-2xl font-bold mb-6"></h2>
 
-    <!-- Bigger fields: scoped styles -->
+    <!-- Autofill loading banner -->
+    <div id="ytBusy" class="hidden mb-4 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 px-3 py-2 text-sm flex items-center gap-2">
+      <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+      Fetching YouTube metadata…
+    </div>
+
     <style>
-      /* Scope to the modal so other forms stay unchanged */
       #diyModal .modal-form input[type="text"],
       #diyModal .modal-form input[type="url"],
       #diyModal .modal-form input[type="number"],
       #diyModal .modal-form input[type="file"],
       #diyModal .modal-form textarea,
-      #diyModal .modal-form select {
-        padding: 0.85rem 1rem;      /* larger padding */
-        font-size: 1rem;            /* ~text-base */
-        line-height: 1.5rem;
-      }
-      #diyModal .modal-form textarea {
-        min-height: 8rem;           /* taller description */
-      }
-      #diyModal .modal-form .field {
-        display: flex;
-        flex-direction: column;
-        gap: 0.4rem;
-      }
-      #diyModal .modal-form label {
-        font-size: 0.95rem;
-      }
-      #diyModal .modal-form .grid {
-        gap: 1.25rem;               /* larger gaps between columns */
-      }
+      #diyModal .modal-form select { padding: .85rem 1rem; font-size: 1rem; line-height: 1.5rem; }
+      #diyModal .modal-form textarea { min-height: 8rem; }
+      #diyModal .modal-form .field { display:flex; flex-direction:column; gap:.4rem; }
+      #diyModal .modal-form label { font-size:.95rem; }
+      #diyModal .modal-form .grid { gap:1.25rem; }
+      /* dim inputs while autofilling */
+      #diyModal .busy *:where(input,textarea,button,select){ pointer-events:none; opacity:.7; }
     </style>
 
     <form id="diyForm" method="post" enctype="multipart/form-data" class="modal-form space-y-6">
       {% csrf_token %}
       <input type="hidden" id="tutorial_id" name="tutorial_id" value="">
 
-      <!-- Row: Title & Points -->
       <div class="grid md:grid-cols-12">
         <div class="field md:col-span-8">
           <label for="id_title" class="block text-sm font-medium">Title</label>
@@ -178,14 +206,12 @@
         </div>
       </div>
 
-      <!-- Description -->
       <div class="field">
         <label for="id_description" class="block text-sm font-medium">Instructions / Description</label>
         {{ form.description }}
         <p class="text-xs text-gray-500 mt-1">Tip: Start lines with “-”, “*”, or “•” for bullet points.</p>
       </div>
 
-      <!-- Row: URL & Duration -->
       <div class="grid md:grid-cols-12">
         <div class="field md:col-span-8">
           <label for="id_video_url" class="block text-sm font-medium">Video URL (YouTube)</label>
@@ -193,9 +219,12 @@
           <div class="flex items-center gap-3 mt-2">
             <button type="button" id="fetchYTMetaBtn"
                     class="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300/60 transition">
+              <span id="ytBtnIconWrap" class="relative flex items-center">
+                <svg id="ytBtnIcon" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4h4v3l1 1v4l-1 1v5a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-5l-1-1V8l1-1z"/></svg>
+                <svg id="ytBtnSpin" class="h-4 w-4 hidden animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+              </span>
               Auto-fill from YouTube
             </button>
-            <!-- New: force refresh switch -->
             <label class="inline-flex items-center gap-2 text-sm">
               {{ form.force_refresh_meta }}
               <span>Refresh metadata from YouTube</span>
@@ -212,7 +241,6 @@
         </div>
       </div>
 
-      <!-- Row: Thumb & Active -->
       <div class="grid md:grid-cols-12 items-start">
         <div class="field md:col-span-8">
           <label for="id_thumbnail" class="block text-sm font-medium">Thumbnail</label>
@@ -245,11 +273,39 @@ function getCSRFToken() {
   return match ? decodeURIComponent(match[1]) : (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value;
 }
 function handleAuthErrors(res) {
-  if (res.status === 401) { alert('Please log in. DIY actions require authentication.'); return true; }
-  if (res.status === 403) { alert('Permission denied. DIY management is for staff only.'); return true; }
+  if (res.status === 401) { showToast('Please log in. DIY actions require authentication.', 'error'); return true; }
+  if (res.status === 403) { showToast('Permission denied. DIY management is for staff only.', 'error'); return true; }
   return false;
 }
 
+/* ---------- Toast ---------- */
+let toastTimer = null;
+function showToast(message, type='success', title=null) {
+  const t = document.getElementById('toast');
+  const titleEl = document.getElementById('toastTitle');
+  const msgEl = document.getElementById('toastMsg');
+  const icon = document.getElementById('toastIcon');
+  titleEl.textContent = title || (type === 'error' ? 'Error' : 'Success');
+  msgEl.textContent = message;
+  icon.className = 'mt-0.5 h-8 w-8 shrink-0 rounded-full flex items-center justify-center ' +
+    (type === 'error' ? 'bg-red-100 text-red-600' :
+     type === 'warn'  ? 'bg-amber-100 text-amber-600' :
+                        'bg-emerald-100 text-emerald-600');
+  icon.innerHTML = type === 'error'
+    ? '<svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 5v7h-2V7h2Zm0 10v2h-2v-2h2Z"/></svg>'
+    : '<svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.2 4.8 12l-1.6 1.6L9 19.4 21.8 6.6 20.2 5z"/></svg>';
+  t.classList.remove('hidden', 'opacity-0');
+  t.classList.add('opacity-100');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, 2500);
+}
+function hideToast(){
+  const t = document.getElementById('toast');
+  t.classList.add('opacity-0');
+  setTimeout(() => t.classList.add('hidden'), 200);
+}
+
+/* ---------- Today’s selection ---------- */
 const todayBox = document.getElementById('todayBox');
 const reloadBtn = document.getElementById('reloadTodayBtn');
 const refreshBtn = document.getElementById('refreshTodayBtn');
@@ -260,27 +316,20 @@ function cardFor(t) {
     ${t.thumbnail ? `<img src="${t.thumbnail}" class="w-28 h-28 object-cover rounded-lg ring-1 ring-black/5" alt="">` :
       `<div class="w-28 h-28 flex items-center justify-center rounded-lg bg-gray-200 text-gray-500 text-xs ring-1 ring-black/5">No image</div>`}
     <div class="flex-1">
-      <p class="font-semibold leading-snug">${t.title || ''}</p>
+      <p class="font-semibold leading-snug text-gray-900">${t.title || ''}</p>
       ${t.video_url ? `<a href="${t.video_url}" target="_blank" class="text-sm text-blue-600 hover:underline break-all">${t.video_url}</a>`: ''}
       ${t.points_on_submit !== undefined ? `<p class="text-sm text-gray-700 mt-1">Points: <span class="font-semibold">${t.points_on_submit}</span></p>`:''}
       ${t.description_html ? `<div class="mt-2 text-sm text-gray-700">${t.description_html}</div>` : ''}
     </div>
   </div>`;
 }
-
 function renderTodayList(data) {
   if (!data || !Array.isArray(data.tutorials) || data.tutorials.length === 0) {
-    todayBox.innerHTML = '<p class="text-gray-500">No tutorials for this period.</p>';
-    return;
+    todayBox.innerHTML = '<p class="text-gray-500">No tutorials for this period.</p>'; return;
   }
   const items = data.tutorials.map(cardFor).join('<div class="h-3"></div>');
-  todayBox.innerHTML = `
-    <div class="space-y-3">
-      ${items}
-      <p class="text-xs text-gray-500">Anchor date: ${data.date}</p>
-    </div>`;
+  todayBox.innerHTML = `<div class="space-y-3">${items}<p class="text-xs text-gray-500">Anchor date: ${data.date}</p></div>`;
 }
-
 async function loadToday(opts = {}) {
   const disable = (b, v) => { if (!b) return; b.disabled = v; b.setAttribute('aria-disabled', v); };
   try {
@@ -292,161 +341,138 @@ async function loadToday(opts = {}) {
     const res = await fetch(`${base}?${params.toString()}`);
     if (res.status === 204) { renderTodayList({ tutorials: [] }); return; }
     if (handleAuthErrors(res)) { todayBox.innerHTML = '<p class="text-red-600">Not authorized.</p>'; return; }
-    const data = await res.json();
-    renderTodayList(data);
+    const data = await res.json(); renderTodayList(data);
   } catch (e) {
     todayBox.innerHTML = '<p class="text-red-600">Failed to load selection.</p>';
-  } finally {
-    disable(reloadBtn, false); disable(refreshBtn, false);
-  }
+  } finally { disable(reloadBtn, false); disable(refreshBtn, false); }
 }
-
 reloadBtn.addEventListener('click', () => loadToday({ refresh: false }));
 refreshBtn.addEventListener('click', () => loadToday({ refresh: true }));
 document.addEventListener('DOMContentLoaded', loadToday);
 
-// ---------- CRUD Modal ----------
+/* ---------- CRUD Modal ---------- */
 const modal = document.getElementById('diyModal');
 const modalTitle = document.getElementById('modalTitle');
 const diyForm = document.getElementById('diyForm');
 const tutorialIdInput = document.getElementById('tutorial_id');
 const ytThumbPreview = document.getElementById('ytThumbPreview');
+const ytBusy = document.getElementById('ytBusy');
+const ytBtnIcon = document.getElementById('ytBtnIcon');
+const ytBtnSpin = document.getElementById('ytBtnSpin');
 
 function openAddModal() {
   modalTitle.textContent = 'Add Tutorial';
   diyForm.reset();
   tutorialIdInput.value = '';
-  ytThumbPreview.src = '';
-  ytThumbPreview.classList.add('hidden');
+  ytThumbPreview.src = ''; ytThumbPreview.classList.add('hidden');
   modal.classList.remove('hidden');
 }
-
 function openEditModal(id, title, description, video_url, duration_seconds, points_on_submit, is_active) {
   modalTitle.textContent = 'Edit Tutorial';
-  diyForm.reset();
-  tutorialIdInput.value = id;
-
+  diyForm.reset(); tutorialIdInput.value = id;
   document.getElementById('id_title').value = title || '';
   document.getElementById('id_description').value = description || '';
   document.getElementById('id_video_url').value = video_url || '';
   document.getElementById('id_duration_seconds').value = (duration_seconds != null ? duration_seconds : '');
   document.getElementById('id_points_on_submit').value = (points_on_submit != null ? points_on_submit : 0);
-  const activeInput = document.getElementById('id_is_active');
-  if (activeInput) activeInput.checked = !!is_active;
-
+  const activeInput = document.getElementById('id_is_active'); if (activeInput) activeInput.checked = !!is_active;
   maybeShowThumbFromUrl(video_url);
   modal.classList.remove('hidden');
 }
+function closeModal(){ modal.classList.add('hidden'); }
 
-function closeModal() { modal.classList.add('hidden'); }
-
-// Save (create/update) with double-submit guard
+/* ---------- Save with toast ---------- */
 let saving = false;
 diyForm.addEventListener('submit', async function(e) {
-  e.preventDefault();
-  if (saving) return;
-  saving = true;
-
+  e.preventDefault(); if (saving) return; saving = true;
   const btn = document.getElementById('saveBtn');
-  const originalHTML = btn.innerHTML;
-  btn.disabled = true;
-  btn.setAttribute('aria-disabled', 'true');
-  btn.innerHTML = 'Saving…';
-
+  const originalHTML = btn.innerHTML; btn.disabled = true; btn.setAttribute('aria-disabled','true'); btn.innerHTML = 'Saving…';
   try {
     const isEditing = !!tutorialIdInput.value;
-    const url = isEditing
-      ? `{% url 'diy_update_tutorial' 0 %}`.replace('0', tutorialIdInput.value)
-      : `{% url 'diy_create_tutorial' %}`;
-
+    const url = isEditing ? `{% url 'diy_update_tutorial' 0 %}`.replace('0', tutorialIdInput.value)
+                          : `{% url 'diy_create_tutorial' %}`;
     const fd = new FormData(this);
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "X-CSRFToken": getCSRFToken() },
-      body: fd
+    const res = await fetch(url, { method:"POST", headers:{ "X-CSRFToken": getCSRFToken() }, body: fd });
+    if (handleAuthErrors(res)) return;
+    const data = await res.json();
+    if (data.success) {
+      showToast(`Tutorial ${isEditing ? 'updated' : 'added'} successfully.`);
+      setTimeout(() => location.reload(), 900);
+    } else {
+      let msg = 'Error saving tutorial.';
+      if (data.errors) {
+        const firstKey = Object.keys(data.errors)[0];
+        msg = `${firstKey}: ${Array.isArray(data.errors[firstKey]) ? data.errors[firstKey][0] : data.errors[firstKey]}`;
+      } else if (data.error) { msg = data.error; }
+      showToast(msg, 'error', 'Save failed');
+    }
+  } catch (err) {
+    showToast('Network error while saving.', 'error');
+  } finally {
+    saving = false; btn.disabled = false; btn.removeAttribute('aria-disabled'); btn.innerHTML = originalHTML;
+  }
+});
+
+/* ---------- Delete with confirm modal ---------- */
+const deletingIds = new Set();
+let pendingDeleteId = null;
+function openDeleteConfirm(id){
+  pendingDeleteId = id;
+  document.getElementById('confirmModal').classList.remove('hidden');
+}
+function closeConfirm(){
+  document.getElementById('confirmModal').classList.add('hidden');
+  pendingDeleteId = null;
+}
+document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
+  const id = pendingDeleteId; if (!id || deletingIds.has(id)) return; deletingIds.add(id);
+  try {
+    const res = await fetch(`{% url 'diy_delete_tutorial' 0 %}`.replace('0', id), {
+      method: "POST", headers: { "X-CSRFToken": getCSRFToken() }
     });
     if (handleAuthErrors(res)) return;
     const data = await res.json();
     if (data.success) {
-      alert(`✅ Tutorial ${isEditing ? 'updated' : 'added'} successfully.`);
-      location.reload();
+      closeConfirm(); showToast('Tutorial deleted.');
+      setTimeout(() => location.reload(), 700);
     } else {
-      let msg = '❌ Error saving tutorial.\n';
-      if (data.errors) {
-        for (const k in data.errors) {
-          if (Array.isArray(data.errors[k])) msg += `${k}: ${data.errors[k][0]}\n`;
-          else msg += `${k}: ${data.errors[k]}\n`;
-        }
-      } else {
-        msg += data.error || 'Unknown error';
-      }
-      alert(msg);
+      showToast(data.error || 'Delete failed.', 'error');
     }
-  } catch (err) {
-    alert('❌ Network error while saving.');
-  } finally {
-    saving = false;
-    btn.disabled = false;
-    btn.removeAttribute('aria-disabled');
-    btn.innerHTML = originalHTML;
-  }
-});
-
-// Delete with double-click guard
-const deletingIds = new Set();
-async function deleteTutorial(id) {
-  if (deletingIds.has(id)) return;
-  if (!confirm('Delete this tutorial permanently?')) return;
-  deletingIds.add(id);
-  try {
-    const res = await fetch(`{% url 'diy_delete_tutorial' 0 %}`.replace('0', id), {
-      method: "POST",
-      headers: { "X-CSRFToken": getCSRFToken() }
-    });
-    if (handleAuthErrors(res)) return;
-    const data = await res.json();
-    if (data.success) location.reload();
-    else alert('❌ Delete failed: ' + (data.error || 'Unknown error'));
-  } catch (e) {
-    alert('❌ Network error while deleting.');
+  } catch {
+    showToast('Network error while deleting.', 'error');
   } finally {
     deletingIds.delete(id);
   }
-}
+});
 
-// ---------- YouTube auto-fill ----------
+/* ---------- YouTube auto-fill with loading ---------- */
 const videoUrlInput = document.getElementById('id_video_url');
 const fetchYTMetaBtn = document.getElementById('fetchYTMetaBtn');
 
+function setYtBusy(on){
+  ytBusy.classList.toggle('hidden', !on);
+  diyForm.classList.toggle('busy', on);
+  ytBtnIcon.classList.toggle('hidden', on);
+  ytBtnSpin.classList.toggle('hidden', !on);
+}
 function maybeShowThumbFromUrl(url) {
   if (!url) { ytThumbPreview.src = ''; ytThumbPreview.classList.add('hidden'); return; }
   try {
-    const u = new URL(url);
-    const host = u.hostname.replace(/^www\./,'');
-    let vid = null;
-    if (host === 'youtu.be') {
-      vid = u.pathname.replace('/','');
-    } else if (host.includes('youtube.com')) {
+    const u = new URL(url); const host = u.hostname.replace(/^www\./,''); let vid = null;
+    if (host === 'youtu.be') { vid = u.pathname.replace('/',''); }
+    else if (host.includes('youtube.com')) {
       if (u.pathname === '/watch') vid = u.searchParams.get('v');
       const parts = u.pathname.split('/').filter(Boolean);
       if (!vid && (parts[0] === 'embed' || parts[0] === 'shorts' || parts[0] === 'v') && parts[1]) vid = parts[1];
     }
-    if (vid) {
-      ytThumbPreview.src = `https://img.youtube.com/vi/${vid}/hqdefault.jpg`;
-      ytThumbPreview.classList.remove('hidden');
-    } else {
-      ytThumbPreview.src = '';
-      ytThumbPreview.classList.add('hidden');
-    }
-  } catch (e) {
-    ytThumbPreview.src = '';
-    ytThumbPreview.classList.add('hidden');
-  }
+    if (vid) { ytThumbPreview.src = `https://img.youtube.com/vi/${vid}/hqdefault.jpg`; ytThumbPreview.classList.remove('hidden'); }
+    else { ytThumbPreview.src = ''; ytThumbPreview.classList.add('hidden'); }
+  } catch { ytThumbPreview.src = ''; ytThumbPreview.classList.add('hidden'); }
 }
-
 async function fetchYouTubeMeta() {
   const url = (videoUrlInput.value || '').trim();
-  if (!url) { alert('Enter a YouTube URL first.'); return; }
+  if (!url) { showToast('Enter a YouTube URL first.', 'warn', 'Missing URL'); return; }
+  setYtBusy(true);
   try {
     const res = await fetch(`/api/utils/youtube-meta/?url=${encodeURIComponent(url)}`);
     if (!res.ok) throw new Error('Meta endpoint unavailable');
@@ -455,28 +481,26 @@ async function fetchYouTubeMeta() {
 
     const titleEl = document.getElementById('id_title');
     const durEl = document.getElementById('id_duration_seconds');
+    const descEl = document.getElementById('id_description');
+
     if (!titleEl.value.trim() && data.title) titleEl.value = data.title;
     if (!durEl.value && data.duration_seconds) durEl.value = data.duration_seconds;
-    const descEl = document.getElementById('id_description');
     if (!descEl.value.trim()) {
-      if (data.description) {
-        descEl.value = data.description.slice(0, 4000);
-      } else if (data.author_url) {
+      if (data.description) descEl.value = data.description.slice(0, 4000);
+      else if (data.author_url) {
         const who = data.author_name || 'this creator';
         descEl.value = `Subscribe to: ${who} — ${data.author_url}`;
       }
     }
-    if (data.thumbnail) {
-      ytThumbPreview.src = data.thumbnail;
-      ytThumbPreview.classList.remove('hidden');
-    } else {
-      maybeShowThumbFromUrl(url);
-    }
+    if (data.thumbnail) { ytThumbPreview.src = data.thumbnail; ytThumbPreview.classList.remove('hidden'); }
+    else { maybeShowThumbFromUrl(url); }
+
+    showToast('Fields auto-filled from YouTube.');
   } catch (e) {
     maybeShowThumbFromUrl(url);
-  }
+    showToast('Could not fetch YouTube metadata.', 'error');
+  } finally { setYtBusy(false); }
 }
-
 videoUrlInput?.addEventListener('blur', fetchYouTubeMeta);
 fetchYTMetaBtn?.addEventListener('click', fetchYouTubeMeta);
 </script>
