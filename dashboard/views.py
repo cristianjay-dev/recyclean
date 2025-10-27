@@ -12,7 +12,7 @@ import re
 from datetime import datetime, timedelta, date
 from functools import wraps
 from typing import List, Dict, Tuple
-from collections import Counter, defaultdict
+from collections import Counter
 from ultralytics import YOLO
 import torch
 from threading import Lock
@@ -849,8 +849,45 @@ def dashboard(request):
         # Bottle size pie (all-time)
         "pie_labels": json.dumps(["Small", "Large"]),
         "pie_values": json.dumps([int(total_small), int(total_large)]),
+
+        # Staff leaderboard (all-time)
+        "staff_labels": json.dumps(staff_labels),
+        "staff_values": json.dumps(staff_values),
     }
     return render(request, "dashboard.html", context)
+
+@require_admin_page
+def reward_requests_view(request):
+    reward_requests = RewardRequest.objects.select_related("user").order_by("-id")
+    reloadly_balance = None
+    reloadly_currency = "PHP"
+    reloadly_error = None
+    reloadly_txns = []
+    try:
+        bal = get_reloadly_balance()
+        if isinstance(bal, dict):
+            reloadly_balance = bal.get("balance") or bal.get("availableBalance") or bal.get("amount")
+            reloadly_currency = bal.get("currencyCode") or bal.get("currency") or "PHP"
+        else:
+            reloadly_balance = bal
+    except Exception as e:
+        reloadly_error = f"Unable to fetch Reloadly balance: {e}"
+    try:
+        tx = list_reloadly_transactions(page=1, size=20)
+        reloadly_txns = (tx.get("content") or tx.get("data") or tx.get("transactions") or tx.get("items") or []) if isinstance(tx, dict) else (tx or [])
+    except Exception as e:
+        reloadly_error = (reloadly_error + f" | Txns error: {e}") if reloadly_error else f"Txns error: {e}"
+
+    context = {
+        "reward_requests": reward_requests,
+        "total_rewards": RewardRequest.objects.count(),
+        "reloadly_balance": reloadly_balance,
+        "reloadly_currency": reloadly_currency,
+        "reloadly_error": reloadly_error,
+        "reloadly_txns": reloadly_txns,
+    }
+    return render(request, "reward_requests.html", context)
+
 
 # Public API to normalize PH numbers for clients
 @api_view(["GET"])
