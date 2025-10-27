@@ -3,28 +3,59 @@
 {% block content %}
 <h1 class="text-3xl font-semibold mb-6">Dashboard</h1>
 
-<!-- KPI cards -->
+<!-- KPI cards with embedded charts -->
 <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-  <!-- Total Users -->
+  <!-- Total Users (with mini chart) -->
   <div class="bg-white shadow rounded-xl p-5">
-    <div class="text-gray-500 text-sm">Total Users</div>
-    <div class="mt-1 text-3xl font-bold">{{ total_users }}</div>
+    <div class="flex items-start justify-between">
+      <div>
+        <div class="text-gray-500 text-sm">Total Users</div>
+        <div class="mt-1 text-3xl font-bold">{{ total_users }}</div>
+      </div>
+      <select id="users-range" class="border rounded-md text-xs px-2 py-1 h-7">
+        <option value="week" selected>W</option>
+        <option value="month">M</option>
+        <option value="year">Y</option>
+      </select>
+    </div>
+    <!-- Fixed-size chart box -->
+    <div class="mt-3">
+      <canvas id="usersChart" width="320" height="100" class="block"></canvas>
+    </div>
   </div>
 
-  <!-- Total Bottles (small/large) -->
+  <!-- Total Plastic Bottles (with pie) -->
   <div class="bg-white shadow rounded-xl p-5">
     <div class="text-gray-500 text-sm">Total Plastic Bottles</div>
     <div class="mt-1 text-3xl font-bold">{{ total_bottles }}</div>
     <div class="mt-2 text-xs text-gray-500">Small: {{ total_bottles_small }} • Large: {{ total_bottles_large }}</div>
+
+    <!-- Fixed-size pie -->
+    <div class="mt-3 flex items-center justify-center">
+      <canvas id="pieChart" width="220" height="120" class="block"></canvas>
+    </div>
   </div>
 
-  <!-- Total Submissions -->
+  <!-- Total Submissions (with mini chart) -->
   <div class="bg-white shadow rounded-xl p-5">
-    <div class="text-gray-500 text-sm">Total Submissions</div>
-    <div class="mt-1 text-3xl font-bold">{{ total_submissions }}</div>
+    <div class="flex items-start justify-between">
+      <div>
+        <div class="text-gray-500 text-sm">Total Submissions</div>
+        <div class="mt-1 text-3xl font-bold">{{ total_submissions }}</div>
+      </div>
+      <select id="subs-range" class="border rounded-md text-xs px-2 py-1 h-7">
+        <option value="week" selected>W</option>
+        <option value="month">M</option>
+        <option value="year">Y</option>
+      </select>
+    </div>
+    <!-- Fixed-size chart box -->
+    <div class="mt-3">
+      <canvas id="subsChart" width="320" height="100" class="block"></canvas>
+    </div>
   </div>
 
-  <!-- Reloadly Wallet -->
+  <!-- Reloadly Wallet (no chart) -->
   <div class="bg-white shadow rounded-xl p-5">
     <div class="flex items-center justify-between">
       <div class="text-gray-500 text-sm">Reloadly Wallet</div>
@@ -44,49 +75,10 @@
   </div>
 </div>
 
-<!-- Charts -->
-<!-- Charts -->
-<div class="mt-8 grid grid-cols-1 xl:grid-cols-2 gap-6">
-  <!-- Users chart -->
-  <div class="bg-white shadow rounded-xl p-6">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-lg font-semibold">User Sign-ups</h2>
-      <select id="users-range" class="border rounded-md text-sm px-2 py-1">
-        <option value="week" selected>Week</option>
-        <option value="month">Month</option>
-        <option value="year">Year</option>
-      </select>
-    </div>
-    <canvas id="usersChart" height="120"></canvas>
-  </div>
-
-  <!-- Submissions chart -->
-  <div class="bg-white shadow rounded-xl p-6">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-lg font-semibold">Submissions</h2>
-      <select id="subs-range" class="border rounded-md text-sm px-2 py-1">
-        <option value="week" selected>Week</option>
-        <option value="month">Month</option>
-        <option value="year">Year</option>
-      </select>
-    </div>
-    <canvas id="subsChart" height="120"></canvas>
-  </div>
-
-  <!-- Bottle size pie -->
-  <div class="bg-white shadow rounded-xl p-6 xl:col-span-2">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-lg font-semibold">Bottle Size Mix (All-time)</h2>
-    </div>
-    <canvas id="pieChart" height="180"></canvas>
-  </div>
-</div>
-
-
 <!-- Chart.js -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-  // Incoming data
+  // Data from context
   const userWeekLabels  = {{ user_week_labels|safe }};
   const userWeekValues  = {{ user_week_values|safe }};
   const userMonthLabels = {{ user_month_labels|safe }};
@@ -104,35 +96,45 @@
   const pieLabels       = {{ pie_labels|safe }};
   const pieValues       = {{ pie_values|safe }};
 
-  const baseLineOpts = {
-    responsive: true,
-    maintainAspectRatio: false,
+  // IMPORTANT: disable responsiveness and set explicit sizes to prevent growth
+  const fixedLineOpts = {
+    responsive: false,
+    maintainAspectRatio: true,
     scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
     plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } }
   };
 
+  const fixedPieOpts = {
+    responsive: false,
+    maintainAspectRatio: true,
+    plugins: { legend: { position: 'bottom', labels: { boxWidth: 10 } } },
+  };
+
+  // USERS mini chart (bar)
   const usersCtx = document.getElementById('usersChart').getContext('2d');
   const usersChart = new Chart(usersCtx, {
     type: 'bar',
     data: { labels: userWeekLabels, datasets: [{ label: 'Sign-ups', data: userWeekValues }] },
-    options: baseLineOpts
+    options: fixedLineOpts
   });
 
+  // SUBMISSIONS mini chart (bar)
   const subsCtx = document.getElementById('subsChart').getContext('2d');
   const subsChart = new Chart(subsCtx, {
     type: 'bar',
     data: { labels: subWeekLabels, datasets: [{ label: 'Submissions', data: subWeekValues }] },
-    options: baseLineOpts
+    options: fixedLineOpts
   });
 
+  // PIE (small vs large)
   const pieCtx = document.getElementById('pieChart').getContext('2d');
   const pieChart = new Chart(pieCtx, {
     type: 'doughnut',
-    data: { labels: pieLabels, datasets: [{ label: 'Bottles', data: pieValues }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+    data: { labels: pieLabels, datasets: [{ data: pieValues }] },
+    options: fixedPieOpts
   });
 
-  // Range toggles
+  // Range toggles (update data only; charts stay same fixed size)
   document.getElementById('users-range').addEventListener('change', (e) => {
     const v = e.target.value;
     if (v === 'week') { usersChart.data.labels = userWeekLabels; usersChart.data.datasets[0].data = userWeekValues; }
@@ -149,5 +151,4 @@
     subsChart.update();
   });
 </script>
-
 {% endblock %}
