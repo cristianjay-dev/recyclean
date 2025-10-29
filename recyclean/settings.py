@@ -4,12 +4,17 @@ Django settings for recyclean project.
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from celery.schedules import crontab
 
 # -----------------------------------------------------------------------------
 # Paths / env
 # -----------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(dotenv_path=BASE_DIR / ".env.local")
+
+# Prefer .env (prod) and fall back to .env.local (dev)
+loaded = load_dotenv(dotenv_path=BASE_DIR / ".env")
+if not loaded:
+    load_dotenv(dotenv_path=BASE_DIR / ".env.local")
 
 ULTRA_DIR = BASE_DIR / ".ultralytics"
 ULTRA_DIR.mkdir(exist_ok=True)
@@ -18,12 +23,13 @@ os.environ.setdefault("YOLO_CONFIG_DIR", str(ULTRA_DIR))
 # -----------------------------------------------------------------------------
 # Core security & app config
 # -----------------------------------------------------------------------------
-# REQUIRED before first migration (custom user model)
 AUTH_USER_MODEL = "dashboard.User"
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only-insecure-key")
 DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() == "true"
-ALLOWED_HOSTS = [h for h in os.getenv("DJANGO_ALLOWED_HOSTS", "*").split(",") if h]
+
+# Comma-separated list => list[str] with trimming
+ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", "*").split(",") if h.strip()]
 
 # -----------------------------------------------------------------------------
 # Installed apps / middleware
@@ -42,16 +48,15 @@ INSTALLED_APPS = [
 ]
 
 # --- Admin app auth flow (login-first) ---
-LOGIN_URL = "login"                 # send anonymous users to /login/
-LOGIN_REDIRECT_URL = "dashboard" # after successful login
-LOGOUT_REDIRECT_URL = "login"       # after logout
+LOGIN_URL = "login"
+LOGIN_REDIRECT_URL = "dashboard"
+LOGOUT_REDIRECT_URL = "login"
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
 # Session quality-of-life (optional)
 DEFAULT_FROM_EMAIL = "Recyclean <no-reply@localhost>"
-PASSWORD_RESET_TIMEOUT = 60 * 60  # 1 hour, optional
+PASSWORD_RESET_TIMEOUT = 60 * 60  # 1 hour
 SESSION_SAVE_EVERY_REQUEST = True
-
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",  # keep first
@@ -90,7 +95,7 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
         "NAME": os.getenv("DB_NAME", "capstone_db"),
-        "USER": os.getenv("DB_USER", "postgres"),   
+        "USER": os.getenv("DB_USER", "postgres"),
         "PASSWORD": os.getenv("DB_PASSWORD", ""),
         "HOST": os.getenv("DB_HOST", "localhost"),
         "PORT": os.getenv("DB_PORT", "5432"),
@@ -108,14 +113,13 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 REST_FRAMEWORK = {
-    # Tighten per-view; you can switch to Token/JWT later for mobile
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.AllowAny",),
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.UserRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
-        "anon": "10/min",   # unauthenticated (covers login endpoints)
+        "anon": "10/min",
         "user": "60/min",
     },
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -146,15 +150,35 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # -----------------------------------------------------------------------------
 # CORS / CSRF
 # -----------------------------------------------------------------------------
-CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL", "true").lower() == "true"
-# For production, set CORS_ALLOW_ALL=false and provide explicit origins:
-# CORS_ALLOWED_ORIGINS = [o for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o]
-# CSRF_TRUSTED_ORIGINS = [u for u in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if u]
+CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL", "false").lower() == "true"
+CORS_ALLOWED_ORIGINS = [
+    o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()
+]
+CSRF_TRUSTED_ORIGINS = [
+    u.strip() for u in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if u.strip()
+]
 
 # -----------------------------------------------------------------------------
-# Reloadly config (from your original)
+# Security for HTTPS behind Caddy / proxy
+# (all controlled via .env so dev stays easy)
 # -----------------------------------------------------------------------------
-RELOADLY_ENV = os.getenv("RELOADLY_ENV", "sandbox")  # 'sandbox' or 'live'
+SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "false").lower() == "true"
+SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
+CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "false").lower() == "true"
+
+# SECURE_PROXY_SSL_HEADER=HTTP_X_FORWARDED_PROTO,https (in .env)
+_proxy_hdr = os.getenv("SECURE_PROXY_SSL_HEADER")
+if _proxy_hdr:
+    try:
+        h, v = _proxy_hdr.split(",", 1)
+        SECURE_PROXY_SSL_HEADER = (h.strip(), v.strip())
+    except ValueError:
+        pass  # ignore malformed env; keep default
+
+# -----------------------------------------------------------------------------
+# Reloadly config
+# -----------------------------------------------------------------------------
+RELOADLY_ENV = os.getenv("RELOADLY_ENV", "sandbox")
 RELOADLY_CLIENT_ID = os.getenv("RELOADLY_CLIENT_ID", "")
 RELOADLY_CLIENT_SECRET = os.getenv("RELOADLY_CLIENT_SECRET", "")
 RELOADLY_WEBHOOK_SECRET = os.getenv("RELOADLY_WEBHOOK_SECRET", "")
@@ -169,76 +193,59 @@ RELOADLY_ACCEPT_HEADER = os.getenv("RELOADLY_ACCEPT_HEADER", "application/com.re
 # -----------------------------------------------------------------------------
 # Rewards / points conversion + helpers
 # -----------------------------------------------------------------------------
-# e.g. 1 PHP = 10 points  → ₱10 costs 100 points
 POINTS_PER_PHP = int(os.getenv("POINTS_PER_PHP", "10"))
-
-# Country/telco defaults used by rewards flow
 RELOADLY_COUNTRY_CODE = os.getenv("RELOADLY_COUNTRY_CODE", "PH")
-
-# Optional admin/shared-key bypass used by some staff-only endpoints (safe to leave blank)
 ADMIN_SHARED_KEY = os.getenv("ADMIN_SHARED_KEY", "")
-
-# Optional: allow bypassing staff checks in dev; keep False in prod
 DIY_ADMIN_BYPASS = os.getenv("DIY_ADMIN_BYPASS", "false").lower() == "true"
-
-
-# -----------------------------------------------------------------------------
-# Optional extra security headers for production (HTTPS)
-# -----------------------------------------------------------------------------
-# SECURE_SSL_REDIRECT = True
-# SESSION_COOKIE_SECURE = True
-# CSRF_COOKIE_SECURE = True
-# SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # -----------------------------------------------------------------------------
 # DIY rotation (weekly 3 videos)
 # -----------------------------------------------------------------------------
-DIY_PERIOD = os.getenv("DIY_PERIOD", "week")                # "day" or "week"
-DIY_DAILY_COUNT = int(os.getenv("DIY_DAILY_COUNT", "3"))    # items per period
-
-# No-repeat window (in weeks) used for variety. This can be >2 if you want
-# broader variety. We'll still *always* block last week via DIY_NO_CONSECUTIVE_WEEKS.
+DIY_PERIOD = os.getenv("DIY_PERIOD", "week")
+DIY_DAILY_COUNT = int(os.getenv("DIY_DAILY_COUNT", "3"))
 DIY_NO_REPEAT_WEEKS = int(os.getenv("DIY_NO_REPEAT_WEEKS", "4"))
-
-# Start of week (0=Mon … 6=Sun) and rotation salt for round-robin start
 DIY_WEEK_START = int(os.getenv("DIY_WEEK_START", "0"))
 DIY_ROTATION_SALT = int(os.getenv("DIY_ROTATION_SALT", "0"))
-
-# NEW: Hard rule — never repeat an item in consecutive weeks.
 DIY_NO_CONSECUTIVE_WEEKS = os.getenv("DIY_NO_CONSECUTIVE_WEEKS", "true").lower() == "true"
-
-# NEW: If the pool is too small to fill the week strictly honoring DIY_NO_REPEAT_WEEKS,
-# we relax the wider window *but still* keep DIY_NO_CONSECUTIVE_WEEKS enforced.
 DIY_SOFT_NO_REPEAT_WHEN_POOL_SMALL = os.getenv("DIY_SOFT_NO_REPEAT_WHEN_POOL_SMALL", "true").lower() == "true"
 
-# DIY image retention / cleanup
 DIY_IMAGE_RETENTION_DAYS = int(os.getenv("DIY_IMAGE_RETENTION_DAYS", "365"))
-DIY_IMAGE_CLEANUP_BATCH  = int(os.getenv("DIY_IMAGE_CLEANUP_BATCH", "500"))
-
+DIY_IMAGE_CLEANUP_BATCH = int(os.getenv("DIY_IMAGE_CLEANUP_BATCH", "500"))
 
 # ---- YOLO segmentation config ----
-YOLO_SEG_WEIGHTS = BASE_DIR / "ml" / "yolo" / "bottle" / "best.pt"
-YOLO_DEVICE = "cpu"      # start on CPU; switch to 0 for CUDA:0 if available
+YOLO_SEG_WEIGHTS = Path(
+    os.getenv(
+        "YOLO_SEG_WEIGHTS",
+        str(BASE_DIR / "ml" / "yolo" / "bottle" / "best.pt"),
+    )
+)
+
+if not YOLO_SEG_WEIGHTS.exists():
+    import warnings
+    warnings.warn(f"YOLO weights not found at {YOLO_SEG_WEIGHTS}")
+
+# Only fail fast in development
+if DEBUG:
+    assert YOLO_SEG_WEIGHTS.exists(), f"Missing weights at {YOLO_SEG_WEIGHTS}"
+
+YOLO_DEVICE = "cpu"      # switch to "0" for CUDA:0 if available
 YOLO_CONF = 0.68
-YOLO_IOU  = 0.70
+YOLO_IOU = 0.70
 YOLO_MAX_DET = 100
 YOLO_IMG_SIZE = 896
 SEG_CLASS_NAMES = ["small_bottle", "large_bottle"]
 
-DEDUP_SAMECLASS_IOU     = 0.80
+DEDUP_SAMECLASS_IOU = 0.80
 AREA_PROMOTE_LARGE_FRAC = 0.12
 
-# Optional: fail fast if missing
-assert (YOLO_SEG_WEIGHTS).exists(), f"Missing weights at {YOLO_SEG_WEIGHTS}"
-
+# -----------------------------------------------------------------------------
+# Celery / Redis
+# -----------------------------------------------------------------------------
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://redis:6379/1")
-CELERY_TIMEZONE = TIME_ZONE  # "Asia/Manila"
-CELERY_ENABLE_UTC = False    # we already use local TZ in Django
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_ENABLE_UTC = False  # we already use local TZ in Django
 
-from celery.schedules import crontab
-
-# Option A (recommended): run **monthly** on the 1st at 03:15 PH time; still deletes >365-day-old images.
 CELERY_BEAT_SCHEDULE = {
     "cleanup-diy-images-yearly": {
         "task": "dashboard.tasks.cleanup_diy_images_task",

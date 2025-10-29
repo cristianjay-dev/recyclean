@@ -1,0 +1,175 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [recyclean-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -h 127.0.0.1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [recyclean-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web:
+    build: .
+    working_dir: /app
+    command: >
+      sh -lc "
+        python manage.py migrate &&
+        python manage.py collectstatic --noinput &&
+        gunicorn recyclean.wsgi:application
+          --bind 0.0.0.0:8000
+          --workers 3
+          --timeout 180
+      "
+    env_file:
+      - .env
+    environment:
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      PYTHONUNBUFFERED: "1"
+      YOLO_SEG_WEIGHTS: /app/ml/yolo/bottle/best.pt
+    volumes:
+      - .:/app:ro                       # code (read-only for safety)
+      - static_data:/app/staticfiles    # collectstatic target
+      - media_data:/app/media           # user uploads
+      - ./ml/yolo/bottle:/app/ml/yolo/bottle:ro  # YOLO weights
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [recyclean-net]
+    restart: unless-stopped
+    healthcheck:
+      # Simple TCP connect healthcheck (no need for a /healthz endpoint)
+      test: ["CMD-SHELL", "python -c 'import socket,sys; s=socket.socket(); s.settimeout(2); s.connect((\"127.0.0.1\",8000)); s.close(); sys.exit(0)'"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  celery-worker:
+    build: .
+    working_dir: /app
+    command: sh -lc "celery -A recyclean worker -l INFO"
+    env_file: [.env]
+    environment:
+      CELERY_TIMEZONE: Asia/Manila
+      CELERY_ENABLE_UTC: "0"
+      PYTHONUNBUFFERED: "1"
+      YOLO_SEG_WEIGHTS: /app/ml/yolo/bottle/best.pt
+    volumes:
+      - .:/app:ro
+      - media_data:/app/media
+      - ./ml/yolo/bottle:/app/ml/yolo/bottle:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [recyclean-net]
+    restart: unless-stopped
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  celery-beat:
+    build: .
+    working_dir: /app
+    command: sh -lc "celery -A recyclean beat -l INFO --schedule /data/celerybeat-schedule"
+    env_file: [.env]
+    environment:
+      CELERY_TIMEZONE: Asia/Manila
+      CELERY_ENABLE_UTC: "0"
+      PYTHONUNBUFFERED: "1"
+      YOLO_SEG_WEIGHTS: /app/ml/yolo/bottle/best.pt
+    volumes:
+      - .:/app:ro
+      - beat_schedule:/data
+      - ./ml/yolo/bottle:/app/ml/yolo/bottle:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [recyclean-net]
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # HTTPS reverse proxy + static/media file server
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data                # Let's Encrypt cert storage
+      - caddy_config:/config
+      - static_data:/srv/static:ro
+      - media_data:/srv/media:ro
+    depends_on:
+      web:
+        condition: service_started
+    networks: [recyclean-net]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  recyclean-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  media_data:
+  static_data:
+  beat_schedule:
+  caddy_data:
+  caddy_config:

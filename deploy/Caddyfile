@@ -1,0 +1,40 @@
+# Admin app (serves static/media directly; everything else to Django)
+admin.recyclean.app {
+    encode gzip zstd
+
+    handle_path /static/* {
+        root * /srv/static
+        file_server
+    }
+
+    handle_path /media/* {
+        root * /srv/media
+        file_server
+    }
+
+    reverse_proxy web:8000
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}
+
+# API host (no static/media needed unless you want browsable API assets here)
+api.recyclean.app {
+    encode gzip zstd
+    reverse_proxy web:8000
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}
+
+# OPTIONAL: send apex and www to admin (or to a landing page if you have one)
+recyclean.app, www.recyclean.app {
+    encode gzip zstd
+    redir https://admin.recyclean.app{uri} 308
+}
