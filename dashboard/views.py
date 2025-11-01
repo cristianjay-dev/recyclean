@@ -2750,12 +2750,17 @@ class SubmissionClaimView(views.APIView):
                 return Response({"success": False, "error": "Invalid QR."}, status=404)
 
             if sub.status != "pending":
-                if sub.status == "claimed" and sub.claimed_by_id == request.user.id:
-                    return Response(
-                        {"success": True, "claimed_points": sub.claimed_points, "balance": request.user.total_points},
-                        status=200
-                    )
-                return Response({"success": False, "error": "QR already used or invalid state."}, status=400)
+                return Response(
+                    {
+                        "success": False,
+                        "error": "QR aldready used or not valid.",
+                        "already_claimed": True,
+                        "claimed_by_you": (sub.status == "claimed" and sub.claimed_by_id == request.user.id),
+                        "claimed_points": int(sub.claimed_points or 0),
+                        "balance": request.user.total_points,
+                    },
+                    status=409
+                )
 
             if sub.qr_expires_at and sub.qr_expires_at < timezone.now():
                 if sub.status == "pending":
