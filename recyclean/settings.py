@@ -12,9 +12,9 @@ from celery.schedules import crontab
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Prefer .env (prod) and fall back to .env.local (dev)
-loaded = load_dotenv(dotenv_path=BASE_DIR / ".env")
+loaded = load_dotenv(dotenv_path=BASE_DIR / ".env", override= True)
 if not loaded:
-    load_dotenv(dotenv_path=BASE_DIR / ".env.local")
+    load_dotenv(dotenv_path=BASE_DIR / ".env.local" , override= True)
 
 ULTRA_DIR = BASE_DIR / ".ultralytics"
 ULTRA_DIR.mkdir(exist_ok=True)
