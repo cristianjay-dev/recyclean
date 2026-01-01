@@ -20,7 +20,6 @@
         <input type="date" id="all_to" class="rounded-lg border-gray-300 bg-white py-2 px-3 text-sm focus:border-emerald-500 focus:ring-emerald-500">
       </div>
       <button class="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-white text-sm font-medium shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
-        <!-- download icon -->
         <svg class="h-4 w-4 text-white/90" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M12 3a1 1 0 0 1 1 1v8.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42L11 12.6V4a1 1 0 0 1 1-1ZM4 20a1 1 0 0 1 1-1h14a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Z"/>
         </svg>
@@ -49,6 +48,15 @@
           class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-400"
         >
           🔒 Unlock editing
+        </button>
+
+        <!-- Manual relock (shown only when unlocked) -->
+        <button
+          id="lockNowBtn"
+          type="button"
+          class="hidden inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-300"
+        >
+          🔐 Lock now
         </button>
       </div>
     </div>
@@ -92,6 +100,16 @@
                class="rounded-lg border-gray-300 bg-white px-3 py-2 w-32 text-sm focus:border-indigo-500 focus:ring-indigo-500" disabled>
       </div>
 
+      <div>
+        <label class="block text-sm text-gray-600 mb-1">Points per ₱1</label>
+        <input name="points_per_peso"
+              type="number"
+              min="1"
+              value="{{ cfg.points_per_peso|default:10 }}"
+              class="rounded-lg border-gray-300 bg-white px-3 py-2 w-32 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+              disabled>
+      </div>
+
       <!-- Save area with spinner -->
       <button id="saveBtn" class="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-white text-sm font-medium shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500" disabled>
         <span class="save-label">Save</span>
@@ -130,12 +148,13 @@
         <tr>
           <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Barangay</th>
           <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Staff</th>
+          <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Export range</th>
           <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Actions</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-gray-100">
         {% for site in sites %}
-        <tr class="hover:bg-gray-50/70">
+        <tr class="hover:bg-gray-50/70" data-site-row="{{ site.id }}">
           <td class="px-6 py-4">
             <a href="{% url 'dropoff_site_detail' site.id %}" class="inline-flex items-center gap-2 text-emerald-700 hover:text-emerald-800 font-medium">
               {{ site.barangay.name|default:site.barangay }}
@@ -144,6 +163,7 @@
               </svg>
             </a>
           </td>
+
           <td class="px-6 py-4">
             {% with members=site.staff_members.all %}
               <div class="flex items-center gap-2 flex-wrap">
@@ -161,13 +181,26 @@
               </div>
             {% endwith %}
           </td>
+
+          <!-- Per-row range inputs (fallbacks to global if empty) -->
+          <td class="px-6 py-4">
+            <div class="flex items-center gap-2">
+              <input type="date" class="site-from rounded-lg border-gray-300 bg-white py-1.5 px-2 text-sm focus:border-emerald-500 focus:ring-emerald-500">
+              <span class="text-xs text-gray-400">to</span>
+              <input type="date" class="site-to rounded-lg border-gray-300 bg-white py-1.5 px-2 text-sm focus:border-emerald-500 focus:ring-emerald-500">
+            </div>
+            <div class="mt-1 text-xs text-gray-400">
+              Leave blank to use the global range above.
+            </div>
+          </td>
+
           <td class="px-6 py-4">
             <div class="flex items-center gap-2">
               <a href="{% url 'dropoff_site_detail' site.id %}"
                  class="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-1.5 text-white text-sm shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
                 View
               </a>
-              <button onclick="exportSiteCSV({{ site.id }})"
+              <button type="button" onclick="exportSiteCSV({{ site.id }})"
                       class="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-1.5 text-white text-sm shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
                 Export CSV
               </button>
@@ -176,7 +209,7 @@
         </tr>
         {% empty %}
         <tr>
-          <td colspan="3" class="px-6 py-8 text-center text-gray-500">No drop-off sites yet.</td>
+          <td colspan="4" class="px-6 py-8 text-center text-gray-500">No drop-off sites yet.</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -187,6 +220,35 @@
 <script>
   /* Utilities */
   function qs(v){ return encodeURIComponent(v || ""); }
+
+  function getCSRF(){
+    const m = document.cookie.match(/csrftoken=([^;]+)/);
+    return m ? m[1] : '';
+  }
+
+  function parseDateValue(v){
+    if (!v) return null;
+    const d = new Date(v + "T00:00:00");
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function validateRange(fromVal, toVal){
+    const f = parseDateValue(fromVal);
+    const t = parseDateValue(toVal);
+    if (f && t && f > t) {
+      alert("Invalid date range: 'From' cannot be later than 'To'.");
+      return false;
+    }
+    return true;
+  }
+
+  // Optional: if user sets "From" but leaves "To" blank, set To = From (simple convenience)
+  function normalizeRange(fromEl, toEl){
+    if (!fromEl || !toEl) return;
+    if (fromEl.value && !toEl.value) toEl.value = fromEl.value;
+  }
+
+  /* Basic JSON POST helper */
   if (!window.postJson) {
     window.postJson = async function(url, body){
       const res = await fetch(url, {
@@ -201,23 +263,45 @@
       return data;
     };
   }
-  function getCSRF(){
-    const m = document.cookie.match(/csrftoken=([^;]+)/);
-    return m ? m[1] : '';
-  }
 
   /* Exporters */
   function exportAllCSV(){
-    const f = document.getElementById('all_from').value;
-    const t = document.getElementById('all_to').value;
+    const fromEl = document.getElementById('all_from');
+    const toEl   = document.getElementById('all_to');
+    const f = fromEl?.value || "";
+    const t = toEl?.value || "";
+
+    normalizeRange(fromEl, toEl);
+
+    const ff = fromEl?.value || "";
+    const tt = toEl?.value || "";
+
+    if (!validateRange(ff, tt)) return false;
+
     let url = "{% url 'export_all_submissions_csv' %}";
-    if (f || t) url += `?from=${qs(f)}&to=${qs(t)}`;
+    if (ff || tt) url += `?from=${qs(ff)}&to=${qs(tt)}`;
     window.location.href = url;
     return false;
   }
+
   function exportSiteCSV(siteId){
-    const f = document.getElementById('all_from').value;
-    const t = document.getElementById('all_to').value;
+    const row = document.querySelector(`tr[data-site-row="${siteId}"]`);
+    const rowFromEl = row?.querySelector('.site-from');
+    const rowToEl   = row?.querySelector('.site-to');
+
+    normalizeRange(rowFromEl, rowToEl);
+
+    const rowFrom = rowFromEl?.value || "";
+    const rowTo   = rowToEl?.value || "";
+
+    const globalFrom = document.getElementById('all_from')?.value || "";
+    const globalTo   = document.getElementById('all_to')?.value || "";
+
+    const f = rowFrom || globalFrom;
+    const t = rowTo   || globalTo;
+
+    if (!validateRange(f, t)) return;
+
     let url = "{% url 'export_site_submissions_csv' 0 %}".replace("0", siteId);
     if (f || t) url += `?from=${qs(f)}&to=${qs(t)}`;
     window.location.href = url;
@@ -225,6 +309,7 @@
 
   /* Re-auth UI / logic */
   const unlockBtn      = document.getElementById('unlockBtn');
+  const lockNowBtn     = document.getElementById('lockNowBtn');
   const form           = document.getElementById('reauthForm');
   const cancelReauth   = document.getElementById('cancelReauth');
   const errBox         = document.getElementById('reauthErr');
@@ -232,40 +317,69 @@
   const unlockedBanner = document.getElementById('unlockedBanner');
   const unlockTimeLeft = document.getElementById('unlockTimeLeft');
   const saveBtn        = document.getElementById('saveBtn');
-  const saveLabel      = saveBtn.querySelector('.save-label');
-  const saveSpinner    = saveBtn.querySelector('.save-spinner');
+  const saveLabel      = saveBtn?.querySelector('.save-label');
+  const saveSpinner    = saveBtn?.querySelector('.save-spinner');
 
   let relockTimer = null;
   let relockDeadline = null;
 
-  function show(el){ el.classList.remove('hidden'); }
-  function hide(el){ el.classList.add('hidden'); }
+  function show(el){ if (el) el.classList.remove('hidden'); }
+  function hide(el){ if (el) el.classList.add('hidden'); }
+
+  function resetSaveUI(){
+    if (!saveBtn) return;
+    saveBtn.disabled = false; // when unlocked we will set correctly
+    if (saveSpinner) saveSpinner.classList.add('hidden');
+    if (saveLabel) saveLabel.textContent = 'Save';
+  }
+
+  function hardLock(){
+    localStorage.removeItem('points_unlock_until');
+    setLockedState(true);
+    hide(form);
+    hide(errBox);
+    form?.reset();
+  }
 
   function setLockedState(locked){
+    if (!pointsForm || !unlockBtn) return;
+
     pointsForm.classList.toggle('opacity-60', locked);
     pointsForm.classList.toggle('pointer-events-none', locked);
+
     pointsForm.querySelectorAll('input,button').forEach(el => {
       if (el.name === 'csrfmiddlewaretoken') return;
       el.disabled = locked;
     });
+
+    // lock/unlock header buttons
     unlockBtn.textContent = locked ? '🔒 Unlock editing' : '🔓 Editing unlocked';
     if (locked) {
+      hide(lockNowBtn);
       hide(unlockedBanner);
       if (relockTimer) { clearInterval(relockTimer); relockTimer = null; }
-      saveSpinner.classList.add('hidden');
-      saveLabel.textContent = 'Save';
+      if (saveSpinner) saveSpinner.classList.add('hidden');
+      if (saveLabel) saveLabel.textContent = 'Save';
     } else {
+      show(lockNowBtn);
       show(unlockedBanner);
+      // ensure save UI is correct when entering unlocked state
+      if (saveBtn) saveBtn.disabled = false;
+      if (saveSpinner) saveSpinner.classList.add('hidden');
+      if (saveLabel) saveLabel.textContent = 'Save';
     }
   }
 
   function startRelockCountdown(untilIso){
-    try { relockDeadline = new Date(untilIso); } catch { relockDeadline = null; }
-    if (!relockDeadline) return;
+    if (untilIso) localStorage.setItem('points_unlock_until', untilIso);
+
+    try { relockDeadline = untilIso ? new Date(untilIso) : null; } catch { relockDeadline = null; }
+    if (!relockDeadline || isNaN(relockDeadline.getTime())) return;
+
     function tick(){
       const ms = relockDeadline - new Date();
       if (ms <= 0) {
-        setLockedState(true);
+        hardLock();
         if (relockTimer) clearInterval(relockTimer);
         relockTimer = null;
         return;
@@ -275,46 +389,109 @@
       const ss = String(totalSec % 60).padStart(2,'0');
       if (unlockTimeLeft) unlockTimeLeft.textContent = `${mm}:${ss}`;
     }
+
     tick();
     if (relockTimer) clearInterval(relockTimer);
     relockTimer = setInterval(tick, 1000);
   }
 
+  // Restore unlock state on refresh (if still valid)
+  (function restoreUnlock(){
+    const until = localStorage.getItem('points_unlock_until');
+    if (!until) {
+      setLockedState(true);
+      return;
+    }
+    const d = new Date(until);
+    if (isNaN(d.getTime()) || d <= new Date()) {
+      localStorage.removeItem('points_unlock_until');
+      setLockedState(true);
+      return;
+    }
+    setLockedState(false);
+    startRelockCountdown(until);
+  })();
+
   if (unlockBtn){
-    unlockBtn.addEventListener('click', () => { show(form); hide(errBox); });
+    unlockBtn.addEventListener('click', () => {
+      // If already unlocked, just hide reauth form
+      const isUnlocked = !pointsForm?.classList.contains('pointer-events-none');
+      if (isUnlocked) {
+        hide(form);
+        hide(errBox);
+        return;
+      }
+
+      // Toggle panel for reauth
+      if (form?.classList.contains('hidden')) {
+        show(form);
+        hide(errBox);
+        form?.querySelector('input[name="password"]')?.focus();
+      } else {
+        hide(form);
+        hide(errBox);
+        form?.reset();
+      }
+    });
   }
+
+  if (lockNowBtn){
+    lockNowBtn.addEventListener('click', () => {
+      hardLock();
+    });
+  }
+
   if (cancelReauth){
-    cancelReauth.addEventListener('click', () => { hide(form); hide(errBox); });
+    cancelReauth.addEventListener('click', () => {
+      hide(form);
+      hide(errBox);
+      form?.reset();
+    });
   }
 
   async function doReauth(e){
     e.preventDefault();
     hide(errBox);
+
     const fd = new FormData(form);
     const password = fd.get('password');
+
     try {
       const res = await window.postJson("{% url 'reauth_admin' %}", { password });
       hide(form);
+      form?.reset();
       setLockedState(false);
       startRelockCountdown(res.until || null);
     } catch (err) {
-      errBox.textContent = err.message || 'Authentication failed.';
-      show(errBox);
+      if (errBox) {
+        errBox.textContent = err.message || 'Authentication failed.';
+        show(errBox);
+      }
     }
     return false;
   }
   window.doReauth = doReauth;
 
-  // Saving state: keep form editable; just show spinner & disable button
-  pointsForm.addEventListener('submit', () => {
-    pointsForm.querySelectorAll('input[type="number"]').forEach(el => el.readOnly = true);
-    saveBtn.disabled = true;
-    saveLabel.textContent = 'Saving…';
-    saveSpinner.classList.remove('hidden');
-  });
+  // Saving state: prevent double submit + show spinner
+  if (pointsForm) {
+    pointsForm.addEventListener('submit', (e) => {
+      if (!saveBtn) return;
+      if (saveBtn.disabled) {
+        e.preventDefault();
+        return;
+      }
+      saveBtn.disabled = true;
+      if (saveLabel) saveLabel.textContent = 'Saving…';
+      if (saveSpinner) saveSpinner.classList.remove('hidden');
+    });
 
-  // Start locked
-  setLockedState(true);
+    // If user navigates back to this page, reset save UI
+    window.addEventListener('pageshow', () => {
+      // Only reset label/spinner; disabled state will be set by setLockedState
+      if (saveSpinner) saveSpinner.classList.add('hidden');
+      if (saveLabel) saveLabel.textContent = 'Save';
+    });
+  }
 </script>
 
 {% endblock %}

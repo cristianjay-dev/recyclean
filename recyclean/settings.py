@@ -193,7 +193,7 @@ RELOADLY_ACCEPT_HEADER = os.getenv("RELOADLY_ACCEPT_HEADER", "application/com.re
 # -----------------------------------------------------------------------------
 # Rewards / points conversion + helpers
 # -----------------------------------------------------------------------------
-POINTS_PER_PHP = int(os.getenv("POINTS_PER_PHP", "10"))
+DEFAULT_POINTS_PER_PESO = int(os.getenv("POINTS_PER_PHP", "10"))
 RELOADLY_COUNTRY_CODE = os.getenv("RELOADLY_COUNTRY_CODE", "PH")
 ADMIN_SHARED_KEY = os.getenv("ADMIN_SHARED_KEY", "")
 DIY_ADMIN_BYPASS = os.getenv("DIY_ADMIN_BYPASS", "false").lower() == "true"

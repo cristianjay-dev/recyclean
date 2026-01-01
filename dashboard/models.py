@@ -124,26 +124,40 @@ class DropOffSite(models.Model):
 
 class PointsConfig(models.Model):
     """
-    Global, adjustable bottle points (small/large).
+    Global, adjustable settings:
+    - bottle points (small/large)
+    - points-per-peso conversion
     Enforced singleton via a constant unique field.
     """
     singleton = models.PositiveSmallIntegerField(default=1, unique=True, editable=False)
+
     small_bottle_points = models.PositiveIntegerField(
         default=5, validators=[MinValueValidator(0)], help_text="Points per SMALL bottle"
     )
     large_bottle_points = models.PositiveIntegerField(
         default=10, validators=[MinValueValidator(0)], help_text="Points per LARGE bottle"
     )
+
+    # NEW: points-to-peso conversion (10 points = 1 peso default)
+    points_per_peso = models.PositiveIntegerField(
+        default=10,
+        validators=[MinValueValidator(1)],
+        help_text="How many points equal 1 PHP (e.g., 10 means 10 points = ₱1).",
+    )
+
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "points_config"
 
     def __str__(self) -> str:
-        return f"PointsConfig(small={self.small_bottle_points}, large={self.large_bottle_points})"
+        return (
+            f"PointsConfig(small={self.small_bottle_points}, "
+            f"large={self.large_bottle_points}, "
+            f"ppp={self.points_per_peso})"
+        )
 
     def save(self, *args, **kwargs):
-        # Always keep singleton marker = 1 so only one row can exist
         self.singleton = 1
         super().save(*args, **kwargs)
 

@@ -234,13 +234,22 @@ def require_staff_page(view_func):
         return view_func(request, *args, **kwargs)
     return _wrapped
 
+def points_per_php() -> int:
+    cfg = PointsConfig.current()
+    try:
+        v = int(cfg.points_per_peso or 10)
+    except Exception:
+        v = 10
+    return max(v, 1)
+
+
 
 def php_to_points(php_amount: int) -> int:
-    rate = int(getattr(settings, "POINTS_PER_PHP", 10))
+    rate = points_per_php()
     return int(php_amount) * rate
 
 def points_to_php_decimal(points: int) -> Decimal:
-    rate = int(getattr(settings, "POINTS_PER_PHP", 10))
+    rate = points_per_php()
     return (Decimal(points) / Decimal(rate)).quantize(TWO_DP, rounding=ROUND_HALF_UP)
 
 
@@ -757,25 +766,6 @@ def dashboard(request):
             key = f"{d.year}-{d.month:02d}" if mode == "year" else d.strftime("%Y-%m-%d")
             c[key] += 1
         return [int(c.get(lbl, 0)) for lbl in labels]
-
-    def _last_12_month_labels(today: date):
-        """['YYYY-MM', ...] last 12 months (oldest → newest)."""
-        lbls = []
-        y, m = today.year, today.month
-        for _ in range(12):
-            lbls.append(f"{y}-{m:02d}")
-            m -= 1
-            if m == 0:
-                m, y = 12, y - 1
-        return list(reversed(lbls))
-
-    def _counts_by_month(qs_datetimes, labels_yyyy_mm):
-        """Count items per YYYY-MM label from a queryset of datetimes."""
-        c = Counter()
-        for dt in qs_datetimes:
-            d = localtime(dt).date()
-            c[f"{d.year}-{d.month:02d}"] += 1
-        return [int(c.get(k, 0)) for k in labels_yyyy_mm]
 
     def _sum_sizes_iter(qs_values):
         """Sum small/large from bottle_data iterable of rows."""
@@ -2008,9 +1998,8 @@ class RedeemRewardView(views.APIView):
             except ValueError as e:
                 return Response({"success": False, "error": str(e)}, status=400)
 
-            POINTS_PER_PHP = int(getattr(settings, "POINTS_PER_PHP", 10))
-            # points are integers; round half up just in case
-            points_cost = int((amount_value * POINTS_PER_PHP).to_integral_value(rounding=ROUND_HALF_UP))
+            RATE = points_per_php()  # PointsConfig.points_per_peso
+            points_cost = int((amount_value * RATE).to_integral_value(rounding=ROUND_HALF_UP))
 
             if user.total_points < points_cost:
                 return Response(
@@ -2019,7 +2008,7 @@ class RedeemRewardView(views.APIView):
                         "error": f"Insufficient points. Need {points_cost}, have {user.total_points}.",
                         "needed_points": points_cost,
                         "have_points": user.total_points,
-                        "rate_points_per_php": POINTS_PER_PHP,
+                        "rate_points_per_php": RATE,
                     },
                     status=400,
                 )
@@ -2120,7 +2109,7 @@ class RedeemRewardView(views.APIView):
                         "new_total_points": user.total_points,
                         "amount_php": str(amount_value),
                         "points_cost": points_cost,
-                        "rate_points_per_php": POINTS_PER_PHP,
+                        "rate_points_per_php": RATE,
                     },
                     status=201,
                 )
@@ -2131,7 +2120,7 @@ class RedeemRewardView(views.APIView):
                         "message": "Top-up request accepted and processing.",
                         "amount_php": str(amount_value),
                         "points_cost": points_cost,
-                        "rate_points_per_php": POINTS_PER_PHP,
+                        "rate_points_per_php": RATE,
                     },
                     status=202,
                 )
@@ -2281,12 +2270,10 @@ def reauth_admin(request):
 class PointsConfigView(views.APIView):
     authentication_classes = [TokenAuthentication, SessionAuthentication, BasicAuthentication]
 
-    # GET: any real staff (or admin-bypass) can read
-    # POST: only admin can update
     def get_permissions(self):
         if self.request.method == "GET":
-            return [IsStaffish()]   # staff can read the config
-        return [IsAdminOnly()]      # only admins can edit
+            return [IsStaffish()]
+        return [IsAdminOnly()]
 
     def get(self, request):
         cfg = PointsConfig.current()
@@ -2294,24 +2281,48 @@ class PointsConfigView(views.APIView):
             "success": True,
             "small": cfg.small_bottle_points,
             "large": cfg.large_bottle_points,
+            "points_per_peso": cfg.points_per_peso,
             "updated_at": localtime(cfg.updated_at).isoformat() if cfg.updated_at else None,
         })
 
     def post(self, request):
+
+        until_iso = request.session.get("points_edit_ok_until")
+        if not _admin_bypass_ok(request):
+            if not until_iso:
+                return Response({"success": False, "error": "Re-auth required."}, status=403)
+            until_dt = parse_datetime(until_iso)
+            if until_dt:
+                if timezone.is_naive(until_dt):
+                    until_dt = timezone.make_aware(until_dt, timezone.get_current_timezone())
+            if not until_dt or until_dt <= timezone.now():
+                return Response({"success": False, "error": "Re-auth window expired."}, status=403)
+            
         try:
             small = int(request.data.get("small", 0))
             large = int(request.data.get("large", 0))
+            ppp   = int(request.data.get("points_per_peso", 10))
         except Exception:
             return Response({"success": False, "error": "Invalid numbers."}, status=400)
+
         if small < 0 or large < 0:
             return Response({"success": False, "error": "Values must be ≥ 0."}, status=400)
+        if ppp < 1:
+            return Response({"success": False, "error": "points_per_peso must be ≥ 1."}, status=400)
 
         cfg = PointsConfig.current()
         cfg.small_bottle_points = small
         cfg.large_bottle_points = large
-        cfg.save(update_fields=["small_bottle_points", "large_bottle_points", "updated_at"])
-        return Response({"success": True, "small": cfg.small_bottle_points, "large": cfg.large_bottle_points})
+        cfg.points_per_peso = ppp
+        cfg.save(update_fields=["small_bottle_points", "large_bottle_points", "points_per_peso", "updated_at"])
+        request.session.pop("points_edit_ok_until", None)
 
+        return Response({
+            "success": True,
+            "small": cfg.small_bottle_points,
+            "large": cfg.large_bottle_points,
+            "points_per_peso": cfg.points_per_peso
+        })
 
 
 class StaffSignupView(views.APIView):
@@ -3067,55 +3078,51 @@ def staff_management_view(request):
     )
 
     
-
-
 @require_admin_page
 @ensure_csrf_cookie
 def submissions_admin_view(request):
     cfg = PointsConfig.current()
 
-    if request.method == "POST":
-        until_iso = request.session.get("points_edit_ok_until")
-        can_edit = False
-        if until_iso:
-            until_dt = parse_datetime(until_iso)
-            if until_dt:
-                if timezone.is_naive(until_dt):
-                    until_dt = timezone.make_aware(until_dt, timezone.get_current_timezone())
-                if until_dt > timezone.now():
-                    can_edit = True
+    def _can_edit(req):
+        until_iso = req.session.get("points_edit_ok_until")
+        if not until_iso:
+            return False
+        until_dt = parse_datetime(until_iso)
+        if not until_dt:
+            return False
+        if timezone.is_naive(until_dt):
+            until_dt = timezone.make_aware(until_dt, timezone.get_current_timezone())
+        return until_dt > timezone.now()
 
-        if not can_edit:
+    if request.method == "POST":
+        if not _can_edit(request):
             sites = (DropOffSite.objects.select_related("barangay")
                      .prefetch_related("staff_members").order_by("barangay__name"))
             return render(request, "submissions_admin.html", {
-                "cfg": cfg,
-                "sites": sites,
+                "cfg": cfg, "sites": sites,
+                "can_edit": False,
                 "points_edit_error": "Re-auth as superuser required before editing.",
             })
 
-        # proceed with saving
-        try:
-            small = int(request.POST.get("small", cfg.small_bottle_points))
-            large = int(request.POST.get("large", cfg.large_bottle_points))
-        except Exception:
-            small = cfg.small_bottle_points
-            large = cfg.large_bottle_points
+        # save...
+        small = int(request.POST.get("small", cfg.small_bottle_points))
+        large = int(request.POST.get("large", cfg.large_bottle_points))
+        ppp   = int(request.POST.get("points_per_peso", cfg.points_per_peso or 10))
 
-        if small >= 0 and large >= 0:
-            cfg.small_bottle_points = small
-            cfg.large_bottle_points = large
-            cfg.save(update_fields=["small_bottle_points", "large_bottle_points", "updated_at"])
+        cfg.small_bottle_points = small
+        cfg.large_bottle_points = large
+        cfg.points_per_peso = ppp
+        cfg.save(update_fields=["small_bottle_points","large_bottle_points","points_per_peso","updated_at"])
 
-        # lock again and redirect (PRG)
         request.session.pop("points_edit_ok_until", None)
         messages.success(request, "Points updated.")
-        return redirect("dropoff_sites_view")   # or redirect(request.path)
+        return redirect("dropoff_sites_view")
 
     sites = (DropOffSite.objects.select_related("barangay")
              .prefetch_related("staff_members").order_by("barangay__name"))
-    return render(request, "submissions_admin.html", {"cfg": cfg, "sites": sites})
 
+    can_edit = _can_edit(request)
+    return render(request, "submissions_admin.html", {"cfg": cfg, "sites": sites, "can_edit": can_edit})
 
 
 

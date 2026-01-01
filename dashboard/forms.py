@@ -179,10 +179,11 @@ class DIYTutorialForm(forms.ModelForm):
 class PointsConfigForm(forms.ModelForm):
     class Meta:
         model = PointsConfig
-        fields = ["small_bottle_points", "large_bottle_points"]
+        fields = ["small_bottle_points", "large_bottle_points", "points_per_peso"]
         labels = {
             "small_bottle_points": "Small bottle points",
             "large_bottle_points": "Large bottle points",
+            "points_per_peso": "Points per ₱1",
         }
         widgets = {
             "small_bottle_points": forms.NumberInput(attrs={
@@ -197,19 +198,51 @@ class PointsConfigForm(forms.ModelForm):
                 "id": "id_large_bottle_points",
                 "step": 1,
             }),
+            "points_per_peso": forms.NumberInput(attrs={
+                "class": _BASE_INPUT,
+                "min": 1,
+                "id": "id_points_per_peso",
+                "step": 1,
+            }),
         }
 
     def clean_small_bottle_points(self):
-        v = self.cleaned_data.get("small_bottle_points") or 0
+        v = self.cleaned_data.get("small_bottle_points")
+        if v in (None, ""):
+            return 0
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            raise forms.ValidationError("Small bottle points must be a whole number ≥ 0.")
         if v < 0:
-            raise forms.ValidationError("Must be ≥ 0.")
+            raise forms.ValidationError("Small bottle points must be ≥ 0.")
         return v
 
     def clean_large_bottle_points(self):
-        v = self.cleaned_data.get("large_bottle_points") or 0
+        v = self.cleaned_data.get("large_bottle_points")
+        if v in (None, ""):
+            return 0
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            raise forms.ValidationError("Large bottle points must be a whole number ≥ 0.")
         if v < 0:
-            raise forms.ValidationError("Must be ≥ 0.")
+            raise forms.ValidationError("Large bottle points must be ≥ 0.")
         return v
+
+    def clean_points_per_peso(self):
+        v = self.cleaned_data.get("points_per_peso")
+        if v in (None, ""):
+            # sensible default if omitted
+            return 10
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            raise forms.ValidationError("Points per ₱1 must be a whole number ≥ 1.")
+        if v < 1:
+            raise forms.ValidationError("Points per ₱1 must be ≥ 1.")
+        return v
+
 
 
 # ---------------------------------
