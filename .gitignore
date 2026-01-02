@@ -34,8 +34,7 @@ ENV/
 # Media / static (user uploads)
 # ----------------
 /media/
-/staticfiles/
-/static/
+
 
 # ----------------
 # Docker
