@@ -139,7 +139,7 @@ USE_TZ = True
 # -----------------------------------------------------------------------------
 # Static & media
 # -----------------------------------------------------------------------------
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"   # for collectstatic in prod
 
 MEDIA_URL = "/media/"
